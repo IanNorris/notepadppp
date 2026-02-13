@@ -1,1 +1,10 @@
 /target
+vendor/scintilla/bin/
+vendor/lexilla/bin/
+vendor/scintilla/test/
+vendor/lexilla/test/
+vendor/scintilla/doc/
+vendor/lexilla/doc/
+vendor/scintilla/qt/
+vendor/scintilla/cocoa/
+vendor/scintilla/gtk/

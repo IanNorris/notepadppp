@@ -1,11 +1,19 @@
 // Hide the console window on Windows release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use notepadppp::platform::cli::CliArgs;
-use notepadppp::platform::single_instance::{self, InstanceMessage, SingleInstanceResult};
-use notepadppp::ui::NotepadApp;
+// ── Native Win32 entry point ──
+#[cfg(all(windows, feature = "native-win32"))]
+fn main() {
+    notepadppp::native::win32::run();
+}
 
+// ── Default eframe entry point ──
+#[cfg(not(all(windows, feature = "native-win32")))]
 fn main() -> eframe::Result<()> {
+    use notepadppp::platform::cli::CliArgs;
+    use notepadppp::platform::single_instance::{self, InstanceMessage, SingleInstanceResult};
+    use notepadppp::ui::NotepadApp;
+
     env_logger::init();
 
     let args: Vec<String> = std::env::args().collect();
@@ -77,7 +85,8 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-fn handle_shell_registration(cli: &CliArgs) {
+#[cfg(not(all(windows, feature = "native-win32")))]
+fn handle_shell_registration(cli: &notepadppp::platform::cli::CliArgs) {
     let exe_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "notepadppp".to_string());
