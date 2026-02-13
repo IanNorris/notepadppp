@@ -77,6 +77,12 @@ pub struct NotepadApp {
     show_goto_line: bool,
     /// Input for Go to Line dialog
     goto_line_input: String,
+    /// Whether to show the command palette
+    show_command_palette: bool,
+    /// Current command palette search input
+    command_palette_input: String,
+    /// Filtered command indices
+    command_palette_filtered: Vec<usize>,
     /// Whether to show the preferences panel
     show_preferences: bool,
     /// Application settings
@@ -160,6 +166,9 @@ impl NotepadApp {
             macro_repeat_count: String::from("1"),
             show_goto_line: false,
             goto_line_input: String::new(),
+            show_command_palette: false,
+            command_palette_input: String::new(),
+            command_palette_filtered: Vec::new(),
             show_preferences: false,
             app_settings: crate::io::settings::AppSettings::load(
                 &crate::io::settings::AppSettings::settings_path(),
@@ -248,8 +257,140 @@ impl NotepadApp {
         self.goto_line_input = String::new();
     }
 
+    fn get_commands(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("New File", "Ctrl+N"),
+            ("Open File", "Ctrl+O"),
+            ("Save", "Ctrl+S"),
+            ("Save As", "Ctrl+Shift+S"),
+            ("Save All", ""),
+            ("Close Tab", "Ctrl+W"),
+            ("Close All Tabs", ""),
+            ("Undo", "Ctrl+Z"),
+            ("Redo", "Ctrl+Y"),
+            ("Find", "Ctrl+F"),
+            ("Replace", "Ctrl+H"),
+            ("Find in Files", ""),
+            ("Go to Line", "Ctrl+G"),
+            ("Toggle Word Wrap", ""),
+            ("Toggle Line Numbers", ""),
+            ("Toggle Whitespace", ""),
+            ("Zoom In", "Ctrl+="),
+            ("Zoom Out", "Ctrl+-"),
+            ("Reset Zoom", "Ctrl+0"),
+            ("Split Horizontal", ""),
+            ("Split Vertical", ""),
+            ("Remove Split", ""),
+            ("Toggle Bookmark", "Ctrl+F2"),
+            ("Next Bookmark", "F2"),
+            ("Previous Bookmark", "Shift+F2"),
+            ("Clear Bookmarks", ""),
+            ("Format JSON", "Ctrl+Shift+J"),
+            ("Compact JSON", ""),
+            ("Validate JSON", ""),
+            ("Sort JSON Keys", ""),
+            ("Toggle Markdown Preview", ""),
+            ("Toggle CSV Viewer", ""),
+            ("Toggle Hex Viewer", ""),
+            ("Compare Files", ""),
+            ("Base64 Encode", ""),
+            ("Base64 Decode", ""),
+            ("URL Encode", ""),
+            ("URL Decode", ""),
+            ("Start/Stop Macro Recording", "Ctrl+Shift+R"),
+            ("Play Last Macro", "Ctrl+Shift+P"),
+            ("Export as HTML", ""),
+            ("Export as RTF", ""),
+            ("Preferences", ""),
+            ("Duplicate Line", ""),
+            ("Delete Line", ""),
+            ("Move Line Up", ""),
+            ("Move Line Down", ""),
+            ("Sort Lines Ascending", ""),
+            ("Sort Lines Descending", ""),
+            ("Remove Empty Lines", ""),
+            ("Remove Duplicate Lines", ""),
+            ("Trim Trailing Whitespace", ""),
+            ("Jump to Matching Bracket", "Ctrl+]"),
+        ]
+    }
+
+    fn action_show_command_palette(&mut self) {
+        self.show_command_palette = true;
+        self.command_palette_input = String::new();
+        self.command_palette_filtered = (0..self.get_commands().len()).collect();
+    }
+
+    fn execute_command(&mut self, index: usize) {
+        self.show_command_palette = false;
+        match index {
+            0 => self.action_new(),
+            1 => self.action_open(),
+            2 => self.action_save(),
+            3 => self.action_save_as(),
+            4 => self.action_save_all(),
+            5 => { let idx = self.tab_manager.active_index(); self.action_close_tab(idx); }
+            6 => self.action_close_all(),
+            7 => self.action_undo(),
+            8 => self.action_redo(),
+            9 => self.action_show_find(),
+            10 => self.action_show_replace(),
+            11 => {} // find in files TODO
+            12 => self.action_goto_line(),
+            13 => { self.word_wrap = !self.word_wrap; }
+            14 => { self.show_line_numbers = !self.show_line_numbers; }
+            15 => { self.show_whitespace = !self.show_whitespace; }
+            16 => self.action_zoom_in(),
+            17 => self.action_zoom_out(),
+            18 => self.action_zoom_reset(),
+            19 => { self.split_view.enable(crate::ui::split_view::SplitOrientation::Horizontal); }
+            20 => { self.split_view.enable(crate::ui::split_view::SplitOrientation::Vertical); }
+            21 => { self.split_view.disable(); }
+            22 => self.action_toggle_bookmark(),
+            23 => self.action_next_bookmark(),
+            24 => self.action_prev_bookmark(),
+            25 => self.action_clear_bookmarks(),
+            26 => self.action_json_format(),
+            27 => self.action_json_compact(),
+            28 => self.action_json_validate(),
+            29 => self.action_json_sort_keys(),
+            30 => { self.show_markdown_preview = !self.show_markdown_preview; }
+            31 => { self.show_csv_viewer = !self.show_csv_viewer; }
+            32 => { self.show_hex_viewer = !self.show_hex_viewer; }
+            33 => self.action_compare_files(),
+            34 => self.action_mime_transform(crate::tools::mime_tools::base64_encode),
+            35 => self.action_mime_transform_result(|s| crate::tools::mime_tools::base64_decode(s)),
+            36 => self.action_mime_transform(crate::tools::mime_tools::url_encode),
+            37 => self.action_mime_transform_result(|s| crate::tools::mime_tools::url_decode(s)),
+            38 => self.action_toggle_macro_recording(),
+            39 => self.action_play_last_macro(),
+            40 => self.action_export_html(),
+            41 => self.action_export_rtf(),
+            42 => { self.show_preferences = !self.show_preferences; }
+            43 => self.line_op_duplicate(),
+            44 => self.line_op_delete(),
+            45 => self.line_op_move_up(),
+            46 => self.line_op_move_down(),
+            47 => self.line_op_sort(false),
+            48 => self.line_op_sort(true),
+            49 => self.line_op_remove_empty(),
+            50 => self.line_op_remove_duplicates(),
+            51 => self.line_op_trim_trailing(),
+            52 => {
+                // Jump to matching bracket
+                if let Some(match_byte_pos) = self.matching_bracket_pos {
+                    let doc = self.tab_manager.active_document();
+                    if let Some((line, col)) = doc.buffer.line_col(match_byte_pos) {
+                        self.tab_manager.active_document_mut().cursor.set_position(line, col);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn request_repaint_if_dialog(&self, ctx: &egui::Context) {
-        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences {
+        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette {
             ctx.request_repaint();
         }
     }
@@ -1607,6 +1748,7 @@ impl NotepadApp {
         let ctrl_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.ctrl && !i.modifiers.shift);
         let ctrl_g = ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.ctrl && !i.modifiers.shift);
         let ctrl_bracket = ctx.input(|i| i.key_pressed(egui::Key::CloseBracket) && i.modifiers.ctrl);
+        let ctrl_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && !i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1643,6 +1785,10 @@ impl NotepadApp {
                     self.tab_manager.active_document_mut().cursor.set_position(line, col);
                 }
             }
+        }
+        if ctrl_p {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P));
+            self.action_show_command_palette();
         }
     }
 }
@@ -1977,6 +2123,60 @@ impl eframe::App for NotepadApp {
                 self.show_goto_line = false;
             } else if close {
                 self.show_goto_line = false;
+            }
+        }
+
+        // Command Palette
+        if self.show_command_palette {
+            let commands = self.get_commands();
+            let mut selected: Option<usize> = None;
+            let mut close = false;
+
+            egui::Window::new("Command Palette")
+                .collapsible(false)
+                .resizable(false)
+                .title_bar(false)
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 50.0])
+                .fixed_size([400.0, 300.0])
+                .show(ctx, |ui| {
+                    let response = ui.text_edit_singleline(&mut self.command_palette_input);
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+
+                    // Filter commands
+                    let query = self.command_palette_input.to_lowercase();
+                    let filtered: Vec<usize> = (0..commands.len())
+                        .filter(|&i| {
+                            query.is_empty() || commands[i].0.to_lowercase().contains(&query)
+                        })
+                        .collect();
+
+                    ui.separator();
+
+                    egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
+                        for &idx in &filtered {
+                            let (name, shortcut) = commands[idx];
+                            let label = if shortcut.is_empty() {
+                                name.to_string()
+                            } else {
+                                format!("{}  ({})", name, shortcut)
+                            };
+                            if ui.selectable_label(false, &label).clicked() {
+                                selected = Some(idx);
+                            }
+                        }
+                    });
+
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        close = true;
+                    }
+                });
+
+            if let Some(idx) = selected {
+                self.execute_command(idx);
+            } else if close {
+                self.show_command_palette = false;
             }
         }
 
