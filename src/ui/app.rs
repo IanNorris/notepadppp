@@ -6,10 +6,12 @@ use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
-use crate::tools::{json_tools, markdown_viewer};
+use crate::tools::{csv_viewer, json_tools, markdown_viewer};
+use crate::tools::csv_viewer::CsvData;
 
 use super::editor_widget::editor_widget;
 use super::search_dialog::{self, SearchAction, SearchBarState};
+use super::split_view::{SplitOrientation, SplitView};
 
 /// Main application state implementing `eframe::App`.
 pub struct NotepadApp {
@@ -43,6 +45,14 @@ pub struct NotepadApp {
     file_extension: String,
     /// Whether to show the markdown preview panel
     show_markdown_preview: bool,
+    /// Split view state
+    split_view: SplitView,
+    /// Whether the CSV viewer is enabled
+    show_csv_viewer: bool,
+    /// Parsed CSV data for the active document
+    csv_data: Option<CsvData>,
+    /// Current CSV delimiter
+    csv_delimiter: char,
 }
 
 impl NotepadApp {
@@ -98,6 +108,10 @@ impl NotepadApp {
             syntax_highlighter: highlighter,
             file_extension: ext,
             show_markdown_preview: false,
+            split_view: SplitView::new(),
+            show_csv_viewer: false,
+            csv_data: None,
+            csv_delimiter: ',',
         }
     }
 
@@ -533,6 +547,25 @@ impl NotepadApp {
                 ui.close_menu();
             }
             ui.separator();
+            if ui.button("Split Horizontal").clicked() {
+                self.split_view.enable(SplitOrientation::Horizontal);
+                if self.split_view.second_tab_index.is_none() {
+                    self.split_view.second_tab_index = Some(self.tab_manager.active_index());
+                }
+                ui.close_menu();
+            }
+            if ui.button("Split Vertical").clicked() {
+                self.split_view.enable(SplitOrientation::Vertical);
+                if self.split_view.second_tab_index.is_none() {
+                    self.split_view.second_tab_index = Some(self.tab_manager.active_index());
+                }
+                ui.close_menu();
+            }
+            if ui.button("Remove Split").clicked() {
+                self.split_view.disable();
+                ui.close_menu();
+            }
+            ui.separator();
             if ui.button("Zoom In       Ctrl+=").clicked() {
                 self.action_zoom_in();
                 ui.close_menu();
@@ -673,6 +706,32 @@ impl NotepadApp {
                 self.show_markdown_preview = !self.show_markdown_preview;
                 ui.close_menu();
             }
+            ui.separator();
+            let csv_label = if self.show_csv_viewer {
+                "✓ CSV Viewer"
+            } else {
+                "  CSV Viewer"
+            };
+            if ui.button(csv_label).clicked() {
+                self.show_csv_viewer = !self.show_csv_viewer;
+                if self.show_csv_viewer {
+                    // Parse current document as CSV
+                    self.sync_cache_from_buffer();
+                    self.csv_data = Some(csv_viewer::parse_csv(
+                        &self.text_cache,
+                        self.csv_delimiter,
+                        true,
+                    ));
+                } else {
+                    // Write CSV data back to buffer
+                    if let Some(ref data) = self.csv_data {
+                        self.text_cache = csv_viewer::to_csv(data);
+                        self.sync_buffer_from_cache();
+                    }
+                    self.csv_data = None;
+                }
+                ui.close_menu();
+            }
         });
     }
 
@@ -751,6 +810,7 @@ impl NotepadApp {
             let mut switch_idx: Option<usize> = None;
             let mut close_others_idx: Option<usize> = None;
             let mut close_all = false;
+            let mut clone_to_other: Option<usize> = None;
 
             for (i, title, modified) in &tab_info {
                 let label = if *modified {
@@ -792,6 +852,10 @@ impl NotepadApp {
                         close_all = true;
                         ui.close_menu();
                     }
+                    if ui.button("Clone to Other View").clicked() {
+                        clone_to_other = Some(*i);
+                        ui.close_menu();
+                    }
                 });
 
                 ui.separator();
@@ -817,6 +881,12 @@ impl NotepadApp {
                 self.invalidate_cache();
             } else if let Some(idx) = close_idx {
                 self.action_close_tab(idx);
+            }
+            if let Some(idx) = clone_to_other {
+                if !self.split_view.enabled {
+                    self.split_view.enable(SplitOrientation::Horizontal);
+                }
+                self.split_view.second_tab_index = Some(idx);
             }
         });
     }
@@ -1123,7 +1193,52 @@ impl eframe::App for NotepadApp {
                 })
                 .unwrap_or(false);
 
-            if self.show_markdown_preview && is_md {
+            let is_csv = self
+                .tab_manager
+                .active_document()
+                .path
+                .as_ref()
+                .map(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+
+            if self.show_csv_viewer && is_csv {
+                // CSV viewer mode
+                ui.horizontal(|ui| {
+                    ui.label("Delimiter:");
+                    let delimiters = [(',', "Comma"), ('\t', "Tab"), (';', "Semicolon"), ('|', "Pipe")];
+                    for (d, label) in &delimiters {
+                        if ui.selectable_label(self.csv_delimiter == *d, *label).clicked() {
+                            self.csv_delimiter = *d;
+                            self.sync_cache_from_buffer();
+                            self.csv_data = Some(csv_viewer::parse_csv(
+                                &self.text_cache,
+                                self.csv_delimiter,
+                                true,
+                            ));
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Switch to Text View").clicked() {
+                        if let Some(ref data) = self.csv_data {
+                            self.text_cache = csv_viewer::to_csv(data);
+                            self.sync_buffer_from_cache();
+                        }
+                        self.show_csv_viewer = false;
+                        self.csv_data = None;
+                    }
+                });
+                ui.separator();
+                if let Some(ref mut data) = self.csv_data {
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        csv_viewer::render_csv_table(ui, data);
+                    });
+                }
+            } else if self.show_markdown_preview && is_md {
                 self.sync_cache_from_buffer();
                 let md_text = self.text_cache.clone();
                 ui.columns(2, |columns| {
@@ -1136,6 +1251,103 @@ impl eframe::App for NotepadApp {
                         });
                     });
                 });
+            } else if self.split_view.enabled {
+                // Split view mode
+                let second_idx = self.split_view.second_tab_index.unwrap_or(0);
+                let orientation = self.split_view.orientation;
+                let ratio = self.split_view.ratio;
+                let available = ui.available_rect_before_wrap();
+                let divider_width = 6.0;
+
+                match orientation {
+                    SplitOrientation::Horizontal => {
+                        let total_width = available.width();
+                        let left_width = (total_width * ratio - divider_width / 2.0).max(50.0);
+                        let right_width = (total_width - left_width - divider_width).max(50.0);
+
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui(egui::vec2(left_width, available.height()), |ui| {
+                                self.render_editor(ui);
+                            });
+
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(divider_width, available.height()),
+                                egui::Sense::drag(),
+                            );
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                if response.hovered() || response.dragged() {
+                                    egui::Color32::from_gray(120)
+                                } else {
+                                    egui::Color32::from_gray(80)
+                                },
+                            );
+                            if response.dragged() {
+                                let delta = response.drag_delta().x;
+                                self.split_view.ratio = ((ratio * total_width + delta) / total_width)
+                                    .clamp(0.1, 0.9);
+                            }
+
+                            ui.allocate_ui(egui::vec2(right_width, available.height()), |ui| {
+                                // Render second panel with the second tab
+                                let second_text = self.tab_manager
+                                    .get_document(second_idx)
+                                    .map(|d| d.buffer.text())
+                                    .unwrap_or_default();
+                                let mut text = second_text;
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut text)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                );
+                            });
+                        });
+                    }
+                    SplitOrientation::Vertical => {
+                        let total_height = available.height();
+                        let top_height = (total_height * ratio - divider_width / 2.0).max(50.0);
+                        let bottom_height = (total_height - top_height - divider_width).max(50.0);
+
+                        ui.vertical(|ui| {
+                            ui.allocate_ui(egui::vec2(available.width(), top_height), |ui| {
+                                self.render_editor(ui);
+                            });
+
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(available.width(), divider_width),
+                                egui::Sense::drag(),
+                            );
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                if response.hovered() || response.dragged() {
+                                    egui::Color32::from_gray(120)
+                                } else {
+                                    egui::Color32::from_gray(80)
+                                },
+                            );
+                            if response.dragged() {
+                                let delta = response.drag_delta().y;
+                                self.split_view.ratio = ((ratio * total_height + delta) / total_height)
+                                    .clamp(0.1, 0.9);
+                            }
+
+                            ui.allocate_ui(egui::vec2(available.width(), bottom_height), |ui| {
+                                let second_text = self.tab_manager
+                                    .get_document(second_idx)
+                                    .map(|d| d.buffer.text())
+                                    .unwrap_or_default();
+                                let mut text = second_text;
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut text)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                );
+                            });
+                        });
+                    }
+                }
             } else {
                 self.render_editor(ui);
             }
