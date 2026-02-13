@@ -8,7 +8,7 @@ use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
 use crate::io::session;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
-use crate::tools::{csv_viewer, diff_tool, hex_viewer, json_tools, markdown_viewer, mime_tools};
+use crate::tools::{csv_viewer, diff_tool, export, hex_viewer, json_tools, markdown_viewer, mime_tools};
 use crate::tools::csv_viewer::CsvData;
 use crate::tools::diff_tool::DiffResult;
 use crate::tools::hex_viewer::HexView;
@@ -73,6 +73,10 @@ pub struct NotepadApp {
     show_macro_repeat_dialog: bool,
     /// Repeat count for macro playback
     macro_repeat_count: String,
+    /// Whether to show the preferences panel
+    show_preferences: bool,
+    /// Application settings
+    app_settings: crate::io::settings::AppSettings,
 }
 
 impl NotepadApp {
@@ -140,6 +144,11 @@ impl NotepadApp {
             last_macro: None,
             show_macro_repeat_dialog: false,
             macro_repeat_count: String::from("1"),
+            show_preferences: false,
+            app_settings: crate::io::settings::AppSettings::load(
+                &crate::io::settings::AppSettings::settings_path(),
+            )
+            .unwrap_or_default(),
         }
     }
 
@@ -411,6 +420,7 @@ impl NotepadApp {
             self.render_line_ending_menu(ui);
             self.render_language_menu(ui);
             self.render_tools_menu(ui);
+            self.render_settings_menu(ui);
             self.render_help_menu(ui);
         });
     }
@@ -491,6 +501,20 @@ impl NotepadApp {
                 self.auto_restore_session = !self.auto_restore_session;
                 ui.close_menu();
             }
+
+            ui.separator();
+
+            // Export submenu
+            ui.menu_button("Export", |ui| {
+                if ui.button("As HTML...").clicked() {
+                    self.action_export_html();
+                    ui.close_menu();
+                }
+                if ui.button("As RTF...").clicked() {
+                    self.action_export_rtf();
+                    ui.close_menu();
+                }
+            });
 
             ui.separator();
             if ui.button("Exit").clicked() {
@@ -578,6 +602,38 @@ impl NotepadApp {
                 // TODO: implement find in files dialog
                 ui.close_menu();
             }
+            ui.separator();
+            ui.menu_button("Bookmarks", |ui| {
+                if ui.button("Toggle Bookmark       Ctrl+F2").clicked() {
+                    self.action_toggle_bookmark();
+                    ui.close_menu();
+                }
+                if ui.button("Next Bookmark              F2").clicked() {
+                    self.action_next_bookmark();
+                    ui.close_menu();
+                }
+                if ui.button("Previous Bookmark    Shift+F2").clicked() {
+                    self.action_prev_bookmark();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Clear All Bookmarks").clicked() {
+                    self.action_clear_bookmarks();
+                    ui.close_menu();
+                }
+                if ui.button("Copy Bookmarked Lines").clicked() {
+                    self.action_copy_bookmarked_lines();
+                    ui.close_menu();
+                }
+                if ui.button("Remove Bookmarked Lines").clicked() {
+                    self.action_remove_bookmarked_lines();
+                    ui.close_menu();
+                }
+                if ui.button("Remove Unbookmarked Lines").clicked() {
+                    self.action_remove_unbookmarked_lines();
+                    ui.close_menu();
+                }
+            });
         });
     }
 
@@ -1079,6 +1135,15 @@ impl NotepadApp {
         }
     }
 
+    fn render_settings_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Settings", |ui| {
+            if ui.button("Preferences...").clicked() {
+                self.show_preferences = !self.show_preferences;
+                ui.close_menu();
+            }
+        });
+    }
+
     fn render_help_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Help", |ui| {
             if ui.button("About").clicked() {
@@ -1192,6 +1257,7 @@ impl NotepadApp {
 
     fn render_editor(&mut self, ui: &mut Ui) {
         self.sync_cache_from_buffer();
+        let bookmarks = self.tab_manager.active_document().bookmarks.all_bookmarks();
         editor_widget(
             ui,
             &mut self.text_cache,
@@ -1202,6 +1268,7 @@ impl NotepadApp {
             self.current_match_index,
             &self.syntax_highlighter,
             &self.file_extension,
+            &bookmarks,
         );
         self.sync_buffer_from_cache();
     }
@@ -1365,6 +1432,86 @@ impl NotepadApp {
         });
     }
 
+    // --- Bookmark actions ---
+
+    fn action_toggle_bookmark(&mut self) {
+        let line = self.tab_manager.active_document().cursor.position.line;
+        self.tab_manager.active_document_mut().bookmarks.toggle(line);
+    }
+
+    fn action_next_bookmark(&mut self) {
+        let line = self.tab_manager.active_document().cursor.position.line;
+        if let Some(next) = self.tab_manager.active_document().bookmarks.next_bookmark(line) {
+            self.tab_manager.active_document_mut().cursor.position.line = next;
+            self.tab_manager.active_document_mut().cursor.position.col = 0;
+        }
+    }
+
+    fn action_prev_bookmark(&mut self) {
+        let line = self.tab_manager.active_document().cursor.position.line;
+        if let Some(prev) = self.tab_manager.active_document().bookmarks.prev_bookmark(line) {
+            self.tab_manager.active_document_mut().cursor.position.line = prev;
+            self.tab_manager.active_document_mut().cursor.position.col = 0;
+        }
+    }
+
+    fn action_clear_bookmarks(&mut self) {
+        self.tab_manager.active_document_mut().bookmarks.clear();
+    }
+
+    fn action_copy_bookmarked_lines(&mut self) {
+        self.sync_cache_from_buffer();
+        let lines = self.tab_manager.active_document().bookmarks.bookmarked_lines(&self.text_cache);
+        if !lines.is_empty() {
+            let text = lines.join("\n");
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(text);
+            }
+        }
+    }
+
+    fn action_remove_bookmarked_lines(&mut self) {
+        self.sync_cache_from_buffer();
+        let result = self.tab_manager.active_document().bookmarks.remove_bookmarked_lines(&self.text_cache);
+        self.text_cache = result;
+        self.sync_buffer_from_cache();
+        self.tab_manager.active_document_mut().bookmarks.clear();
+    }
+
+    fn action_remove_unbookmarked_lines(&mut self) {
+        self.sync_cache_from_buffer();
+        let result = self.tab_manager.active_document().bookmarks.remove_unbookmarked_lines(&self.text_cache);
+        self.text_cache = result;
+        self.sync_buffer_from_cache();
+        self.tab_manager.active_document_mut().bookmarks.clear();
+    }
+
+    // --- Export actions ---
+
+    fn action_export_html(&mut self) {
+        self.sync_cache_from_buffer();
+        let html = export::export_html(&self.text_cache, &self.file_extension, &self.syntax_highlighter);
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Export as HTML")
+            .add_filter("HTML", &["html", "htm"])
+            .save_file()
+        {
+            let _ = std::fs::write(path, html);
+        }
+    }
+
+    fn action_export_rtf(&mut self) {
+        self.sync_cache_from_buffer();
+        let rtf = export::export_rtf(&self.text_cache);
+        if let Some(path) = rfd::FileDialog::new()
+            .set_title("Export as RTF")
+            .add_filter("RTF", &["rtf"])
+            .save_file()
+        {
+            let _ = std::fs::write(path, rtf);
+        }
+    }
+
     // --- Keyboard shortcuts ---
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1396,6 +1543,9 @@ impl NotepadApp {
         let ctrl_shift_j = ctx.input(|i| i.key_pressed(egui::Key::J) && i.modifiers.ctrl && i.modifiers.shift);
         let ctrl_shift_r = ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl && i.modifiers.shift);
         let ctrl_shift_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift);
+        let f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && !i.modifiers.ctrl && !i.modifiers.shift);
+        let shift_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.shift && !i.modifiers.ctrl);
+        let ctrl_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.ctrl && !i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1418,6 +1568,9 @@ impl NotepadApp {
         if ctrl_shift_j { self.action_json_format(); }
         if ctrl_shift_r { self.action_toggle_macro_recording(); }
         if ctrl_shift_p { self.action_play_last_macro(); }
+        if ctrl_f2 { self.action_toggle_bookmark(); }
+        if f2 { self.action_next_bookmark(); }
+        if shift_f2 { self.action_prev_bookmark(); }
     }
 }
 
@@ -1700,6 +1853,73 @@ impl eframe::App for NotepadApp {
                         }
                     });
                 });
+        }
+
+        // Preferences window
+        if self.show_preferences {
+            let mut open = self.show_preferences;
+            egui::Window::new("Preferences")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(400.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.heading("Editor");
+                        ui.horizontal(|ui| {
+                            ui.label("Font size:");
+                            ui.add(egui::DragValue::new(&mut self.app_settings.font_size).range(8.0..=48.0).speed(0.5));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Tab size:");
+                            let mut tab = self.app_settings.tab_size as f32;
+                            if ui.add(egui::DragValue::new(&mut tab).range(1.0..=16.0).speed(0.5)).changed() {
+                                self.app_settings.tab_size = tab as usize;
+                            }
+                        });
+                        ui.checkbox(&mut self.app_settings.use_spaces, "Use spaces for tabs");
+                        ui.checkbox(&mut self.app_settings.word_wrap, "Word wrap");
+                        ui.checkbox(&mut self.app_settings.show_line_numbers, "Show line numbers");
+                        ui.checkbox(&mut self.app_settings.show_whitespace, "Show whitespace");
+                        ui.checkbox(&mut self.app_settings.show_status_bar, "Show status bar");
+                        ui.checkbox(&mut self.app_settings.auto_indent, "Auto indent");
+                        ui.checkbox(&mut self.app_settings.auto_close_brackets, "Auto close brackets");
+
+                        ui.separator();
+                        ui.heading("Files");
+                        ui.checkbox(&mut self.app_settings.auto_save, "Auto save");
+                        if self.app_settings.auto_save {
+                            ui.horizontal(|ui| {
+                                ui.label("Interval (secs):");
+                                let mut interval = self.app_settings.auto_save_interval_secs as f32;
+                                if ui.add(egui::DragValue::new(&mut interval).range(10.0..=3600.0).speed(5.0)).changed() {
+                                    self.app_settings.auto_save_interval_secs = interval as u64;
+                                }
+                            });
+                        }
+                        ui.checkbox(&mut self.app_settings.remember_session, "Remember session");
+
+                        ui.separator();
+                        ui.heading("Appearance");
+                        ui.checkbox(&mut self.app_settings.highlight_current_line, "Highlight current line");
+
+                        ui.separator();
+                        ui.heading("Search");
+                        ui.checkbox(&mut self.app_settings.search_wrap_around, "Wrap around");
+                        ui.checkbox(&mut self.app_settings.search_case_sensitive, "Case sensitive");
+
+                        ui.separator();
+                        if ui.button("Save Settings").clicked() {
+                            // Apply settings to app state
+                            self.font_size = self.app_settings.font_size;
+                            self.word_wrap = self.app_settings.word_wrap;
+                            self.show_line_numbers = self.app_settings.show_line_numbers;
+                            self.show_whitespace = self.app_settings.show_whitespace;
+                            self.show_status_bar = self.app_settings.show_status_bar;
+                            let _ = self.app_settings.save(&crate::io::settings::AppSettings::settings_path());
+                        }
+                    });
+                });
+            self.show_preferences = open;
         }
     }
 }

@@ -1,3 +1,4 @@
+pub mod bookmarks;
 pub mod buffer;
 pub mod cursor;
 pub mod document;

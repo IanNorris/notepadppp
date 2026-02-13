@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use super::bookmarks::BookmarkManager;
 use super::buffer::TextBuffer;
 use super::cursor::CursorState;
 
@@ -39,6 +40,7 @@ pub struct Document {
     pub line_ending: LineEnding,
     pub language: String,
     pub read_only: bool,
+    pub bookmarks: BookmarkManager,
 }
 
 impl Default for Document {
@@ -57,6 +59,7 @@ impl Document {
             line_ending: LineEnding::LF,
             language: String::from("Plain Text"),
             read_only: false,
+            bookmarks: BookmarkManager::default(),
         }
     }
 

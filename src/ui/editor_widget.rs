@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, TextFormat, Ui, Vec2};
 use egui::text::LayoutJob;
 
@@ -60,6 +61,7 @@ pub fn editor_widget(
     current_match_index: Option<usize>,
     highlighter: &SyntaxHighlighter,
     file_extension: &str,
+    bookmarked_lines: &[usize],
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
@@ -77,7 +79,8 @@ pub fn editor_widget(
 
     if show_line_numbers {
         let line_count = text.lines().count().max(1);
-        let gutter_width = gutter_width_for(line_count, font_size);
+        let gutter_width = gutter_width_for(line_count, font_size) + if bookmarked_lines.is_empty() { 0.0 } else { font_size };
+        let bookmark_set: BTreeSet<usize> = bookmarked_lines.iter().copied().collect();
 
         ui.horizontal_top(|ui| {
             // Gutter
@@ -90,9 +93,10 @@ pub fn editor_widget(
                     let line_count = text.lines().count().max(1);
                     let extra = if text.ends_with('\n') { 1 } else { 0 };
                     let total_lines = line_count + extra;
-                    let mut gutter_text = String::with_capacity(total_lines * 5);
+                    let mut gutter_text = String::with_capacity(total_lines * 7);
                     for i in 1..=total_lines {
-                        gutter_text.push_str(&format!("{:>width$}\n", i, width = digit_count(total_lines)));
+                        let marker = if bookmark_set.contains(&(i - 1)) { "● " } else { "  " };
+                        gutter_text.push_str(&format!("{}{:>width$}\n", marker, i, width = digit_count(total_lines)));
                     }
                     ui.label(
                         RichText::new(gutter_text.trim_end())
