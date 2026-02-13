@@ -10,31 +10,33 @@ Most programmer's text editors are either bloated Electron apps or ancient C/C++
 
 See [FEATURES.md](FEATURES.md) for the complete feature list and implementation roadmap.
 
-### Current (Skeleton - v0.1.0)
-- Multi-tab document editing
-- Undo/redo with unlimited history
-- File open/save with encoding detection (UTF-8, UTF-8 BOM, UTF-16 LE/BE, ANSI)
-- Line ending detection and conversion (CRLF, LF, CR)
-- Line operations (duplicate, delete, move, sort, trim, dedup)
-- Word wrap toggle
-- Line numbers
-- Zoom in/out
-- Recent files
-- Keyboard shortcuts (Ctrl+N/O/S/W/Z/Y and more)
-- Status bar (line:col, encoding, EOL, language, tab count)
+### ✅ What's Working Now
 
-### Planned
-- Split view / multi-panel editing
-- Powerful regex search with results history panel
-- Syntax highlighting for 80+ languages
-- Multi-cursor / column mode editing
-- Markdown live preview
-- JSON tools (format, validate, tree view)
-- CSV viewer/editor
-- File comparison (diff)
-- Hex viewer/editor
-- Macro recording & playback
-- And much more...
+**Core Editing** — Full-featured tabbed editor with unlimited undo/redo, word wrap, line numbers, auto-save, crash recovery, and session restore.
+
+**Search & Replace** — Find/Replace with regex, match case, whole word, incremental search, match highlighting, find-in-files with results panel, and bookmarks.
+
+**Syntax Highlighting** — 80+ languages powered by syntect, with matching bracket highlighting.
+
+**Advanced Editing** — Multi-cursor editing, rectangular/column selection, macro recording & playback, line sorting, dedup, auto-indent, and tab/space conversion.
+
+**Encoding & EOL** — UTF-8 (with/without BOM), ANSI, encoding conversion, CRLF/LF/CR line endings with mixed-EOL detection.
+
+**Navigation** — Document minimap, function list panel, Go to Line (Ctrl+G), and Command Palette (Ctrl+P).
+
+**Built-in Tools** — Markdown live preview, JSON format/validate/minify, CSV tabular view, side-by-side file diff, hex viewer with ASCII sidebar, HTML export, Base64/URL encode/decode.
+
+**Performance** — Rope-based text storage, efficient undo/redo, streaming large file loading with auto-disable of expensive features.
+
+**Customization** — Dark theme, split editor panels, configurable keyboard shortcuts (JSON), zoom, whitespace display, preferences dialog.
+
+### 🔮 Planned
+- Code folding
+- Folder-as-workspace tree view
+- Light theme and full theme customization
+- Spell checking, code snippets, auto-completion
+- Windows shell integration
+- And more — see [FEATURES.md](FEATURES.md)
 
 ## Building
 
@@ -60,19 +62,46 @@ cargo run
 
 ```
 src/
-├── main.rs              # Entry point
-├── lib.rs               # Library crate
+├── main.rs                  # Entry point
+├── lib.rs                   # Library crate
 ├── editor/
-│   ├── buffer.rs        # Rope-based text buffer with undo/redo
-│   ├── cursor.rs        # Cursor and selection state
-│   ├── document.rs      # Document model (buffer + cursor + metadata)
-│   └── tab_manager.rs   # Multi-tab management
+│   ├── bookmarks.rs         # Line bookmarks
+│   ├── brackets.rs          # Bracket matching
+│   ├── buffer.rs            # Rope-based text buffer with undo/redo
+│   ├── column_select.rs     # Rectangular/column selection
+│   ├── cursor.rs            # Cursor and selection state
+│   ├── document.rs          # Document model (buffer + cursor + metadata)
+│   ├── function_list.rs     # Function/method list parsing
+│   ├── indent.rs            # Auto-indent logic
+│   ├── macros.rs            # Macro recording & playback
+│   ├── multi_cursor.rs      # Multi-cursor editing
+│   ├── syntax.rs            # Syntax highlighting (syntect)
+│   └── tab_manager.rs       # Multi-tab management
 ├── io/
-│   ├── file_io.rs       # File reading/writing with encoding support
-│   └── recent_files.rs  # Recent file history persistence
+│   ├── file_io.rs           # File reading/writing with encoding support
+│   ├── keybindings.rs       # Configurable keyboard shortcuts
+│   ├── large_file.rs        # Large file handling & streaming
+│   ├── line_ending_detect.rs # EOL detection & conversion
+│   ├── recent_files.rs      # Recent file history persistence
+│   ├── session.rs           # Session save/restore
+│   └── settings.rs          # Preferences & configuration
+├── search/
+│   ├── engine.rs            # Search engine (regex, match options)
+│   ├── find_in_files.rs     # Search across files in directory
+│   └── history.rs           # Search history
+├── tools/
+│   ├── csv_viewer.rs        # CSV tabular view
+│   ├── diff_tool.rs         # File comparison (diff)
+│   ├── export.rs            # HTML export
+│   ├── hex_viewer.rs        # Hex viewer with ASCII sidebar
+│   ├── json_tools.rs        # JSON format/validate/minify
+│   ├── markdown_viewer.rs   # Markdown live preview
+│   └── mime_tools.rs        # Base64/URL encode/decode
 └── ui/
-    ├── app.rs           # Main egui application
-    └── editor_widget.rs # Custom editor rendering widget
+    ├── app.rs               # Main egui application
+    ├── editor_widget.rs     # Custom editor rendering widget
+    ├── search_dialog.rs     # Find/Replace dialog
+    └── split_view.rs        # Split editor panels
 ```
 
 ## License

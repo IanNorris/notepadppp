@@ -7,36 +7,36 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ## Phase 1: Core Text Editor (Skeleton)
 
 ### 1.1 Basic Text Editing
-- [ ] Open, create, save, save-as, close files
-- [ ] Cut, copy, paste, undo/redo (unlimited history)
-- [ ] Text selection (character, word, line, all)
+- [x] Open, create, save, save-as, close files
+- [x] Cut, copy, paste, undo/redo (unlimited history)
+- [x] Text selection (character, word, line, all)
 - [ ] Drag and drop text
-- [ ] Word wrap toggle
-- [ ] Line numbering in gutter
-- [ ] Cursor position display (line, column, selection count) in status bar
+- [x] Word wrap toggle
+- [x] Line numbering in gutter
+- [x] Cursor position display (line, column, selection count) in status bar
 - [ ] Read-only mode toggle
 
 ### 1.2 Tabbed Multi-Document Interface
-- [ ] Multiple files open in tabs
-- [ ] Tab context menu (close, close all, close others, close to the right)
+- [x] Multiple files open in tabs
+- [x] Tab context menu (close, close all, close others, close to the right)
 - [ ] Tab reordering via drag and drop
-- [ ] New untitled tabs
-- [ ] Modified indicator on tabs (dot/asterisk)
+- [x] New untitled tabs
+- [x] Modified indicator on tabs (dot/asterisk)
 - [ ] Tab scrolling when many tabs open
 - [ ] Double-click tab to close
 
 ### 1.3 Basic File Operations
-- [ ] Recent file history
-- [ ] Reload from disk
-- [ ] File status auto-detection (external modifications prompt)
-- [ ] Auto-save / crash recovery
+- [x] Recent file history
+- [x] Reload from disk
+- [x] File status auto-detection (external modifications prompt)
+- [x] Auto-save / crash recovery
 - [ ] Open containing folder (in file manager / terminal)
 
 ### 1.4 Native Windows UI
 - [ ] Win32 native window (no web rendering)
-- [ ] Menu bar with standard menus (File, Edit, Search, View, Encoding, Language, Settings, Window, Help)
+- [x] Menu bar with standard menus (File, Edit, Search, View, Encoding, Language, Settings, Window, Help)
 - [ ] Toolbar with common actions
-- [ ] Status bar (encoding, line ending, cursor position, file size, language)
+- [x] Status bar (encoding, line ending, cursor position, file size, language)
 - [ ] Context menu on right-click
 
 ---
@@ -44,7 +44,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ## Phase 2: Multi-View & Window Management
 
 ### 2.1 Split View / Multi-Panel Editing
-- [ ] Split editor into two panels (horizontal/vertical)
+- [x] Split editor into two panels (horizontal/vertical)
 - [ ] Clone document to other view (same file in two panels)
 - [ ] Move tab between views
 - [ ] Independent scrolling per panel
@@ -54,49 +54,49 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [ ] Always on top toggle
 - [ ] Full screen mode
 - [ ] Minimize to system tray
-- [ ] Window position/size persistence
+- [x] Window position/size persistence
 
 ### 2.3 Session Management
-- [ ] Save session (all open files, positions, bookmarks)
-- [ ] Restore session on startup
+- [x] Save session (all open files, positions, bookmarks)
+- [x] Restore session on startup
 - [ ] Named sessions
-- [ ] Auto-session (restore last session on launch)
+- [x] Auto-session (restore last session on launch)
 
 ---
 
 ## Phase 3: Search & Replace
 
 ### 3.1 Find & Replace Dialog
-- [ ] Find (Ctrl+F)
-- [ ] Replace (Ctrl+H)
-- [ ] Options: match case, whole word, wrap around
-- [ ] Search modes: normal, extended (escape sequences), regex
+- [x] Find (Ctrl+F)
+- [x] Replace (Ctrl+H)
+- [x] Options: match case, whole word, wrap around
+- [x] Search modes: normal, extended (escape sequences), regex
 - [ ] Count occurrences
-- [ ] Find next / find previous (F3 / Shift+F3)
-- [ ] Incremental search (find as you type)
-- [ ] Highlight all matches in document
+- [x] Find next / find previous (F3 / Shift+F3)
+- [x] Incremental search (find as you type)
+- [x] Highlight all matches in document
 
 ### 3.2 Find in Files
-- [ ] Search across files in directory/subdirectories
-- [ ] File type filters (e.g., *.rs, *.txt)
+- [x] Search across files in directory/subdirectories
+- [x] File type filters (e.g., *.rs, *.txt)
 - [ ] Replace in files
-- [ ] Results panel with file, line number, matching text
-- [ ] Click result to jump to file and line
+- [x] Results panel with file, line number, matching text
+- [x] Click result to jump to file and line
 
 ### 3.3 Regular Expressions
-- [ ] Full regex support (PCRE-compatible)
+- [x] Full regex support (PCRE-compatible)
 - [ ] Lookaheads and lookbehinds
-- [ ] Capture groups and backreferences in replace
+- [x] Capture groups and backreferences in replace
 - [ ] Multiline matching
-- [ ] Named groups
+- [x] Named groups
 
 ### 3.4 Mark & Bookmarks
 - [ ] Mark all matches (persistent highlighting)
 - [ ] Bookmark lines matching search
-- [ ] Navigate between bookmarks (F2 / Shift+F2)
+- [x] Navigate between bookmarks (F2 / Shift+F2)
 - [ ] Copy/cut all bookmarked lines
 - [ ] Remove all bookmarked/unbookmarked lines
-- [ ] Toggle bookmark on current line
+- [x] Toggle bookmark on current line
 
 ### 3.5 Search Results History Panel
 - [ ] Panel showing all matching lines from searches
@@ -109,22 +109,22 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ## Phase 4: Syntax Highlighting
 
 ### 4.1 Built-in Language Support
-Syntax highlighting and code folding for 80+ languages including:
-- [ ] C, C++, C#, Objective-C
-- [ ] Java, Kotlin, Scala
-- [ ] Python, Ruby, Perl, PHP
-- [ ] JavaScript, TypeScript, CoffeeScript
-- [ ] Rust, Go, Swift, Zig
-- [ ] HTML, XML, XHTML
-- [ ] CSS, SCSS, LESS
-- [ ] JSON, YAML, TOML, INI
-- [ ] SQL, PowerShell, Bash/Shell
-- [ ] Lua, R, MATLAB
-- [ ] Markdown, LaTeX
-- [ ] Assembly (x86, ARM)
-- [ ] Dockerfile, Makefile
-- [ ] Diff/Patch files
-- [ ] And more...
+Syntax highlighting for 80+ languages (via syntect) including:
+- [x] C, C++, C#, Objective-C
+- [x] Java, Kotlin, Scala
+- [x] Python, Ruby, Perl, PHP
+- [x] JavaScript, TypeScript, CoffeeScript
+- [x] Rust, Go, Swift, Zig
+- [x] HTML, XML, XHTML
+- [x] CSS, SCSS, LESS
+- [x] JSON, YAML, TOML, INI
+- [x] SQL, PowerShell, Bash/Shell
+- [x] Lua, R, MATLAB
+- [x] Markdown, LaTeX
+- [x] Assembly (x86, ARM)
+- [x] Dockerfile, Makefile
+- [x] Diff/Patch files
+- [x] And more...
 
 ### 4.2 Code Folding
 - [ ] Fold/unfold code blocks
@@ -132,7 +132,10 @@ Syntax highlighting and code folding for 80+ languages including:
 - [ ] Fold level (1-9)
 - [ ] Fold margin with +/- indicators
 
-### 4.3 User-Defined Languages
+### 4.3 Bracket Matching
+- [x] Matching bracket highlight
+
+### 4.4 User-Defined Languages
 - [ ] Custom language definition (keywords, operators, comments, folding)
 - [ ] Import/export language definitions
 - [ ] Syntax highlighting customization per language
@@ -142,27 +145,27 @@ Syntax highlighting and code folding for 80+ languages including:
 ## Phase 5: Advanced Editing
 
 ### 5.1 Column Mode Editing
-- [ ] Rectangular selection (Alt+drag)
-- [ ] Column insert (type into column selection)
-- [ ] Column cut/copy/paste
+- [x] Rectangular selection (Alt+Shift+Arrow)
+- [x] Column insert (type into column selection)
+- [x] Column cut/copy/paste
 
 ### 5.2 Multi-Cursor / Multi-Selection
-- [ ] Ctrl+click to add cursors
-- [ ] Ctrl+D to select next occurrence
+- [x] Ctrl+click to add cursors
+- [x] Ctrl+D to select next occurrence
 - [ ] Select all occurrences
-- [ ] Type at all cursors simultaneously
+- [x] Type at all cursors simultaneously
 
 ### 5.3 Line Operations
 - [ ] Duplicate line (Ctrl+D)
 - [ ] Delete line (Ctrl+Shift+K)
-- [ ] Move line up/down (Ctrl+Shift+Up/Down)
+- [x] Move line up/down (Ctrl+Shift+Up/Down)
 - [ ] Join lines
 - [ ] Split lines
-- [ ] Sort lines ascending/descending
+- [x] Sort lines ascending/descending
 - [ ] Sort lines case-insensitive
 - [ ] Sort lines numerically
 - [ ] Sort lines by column
-- [ ] Remove duplicate lines
+- [x] Remove duplicate lines
 - [ ] Remove empty lines
 - [ ] Remove empty lines (containing blank characters)
 - [ ] Insert blank line above/below
@@ -173,21 +176,21 @@ Syntax highlighting and code folding for 80+ languages including:
 - [ ] Trim trailing whitespace
 - [ ] Trim leading whitespace
 - [ ] Trim both
-- [ ] Tab to spaces / spaces to tabs conversion
+- [x] Tab to spaces / spaces to tabs conversion
 - [ ] Comment/uncomment line (language-aware)
 - [ ] Block comment/uncomment
-- [ ] Auto-indent
+- [x] Auto-indent
 
 ### 5.5 Auto-Completion
 - [ ] Word completion (from current document)
 - [ ] Function/parameter hints (for supported languages)
 - [ ] Bracket/quote auto-close
-- [ ] Matching bracket highlight
+- [x] Matching bracket highlight
 
 ### 5.6 Macro Recording & Playback
-- [ ] Record macro (keystrokes)
-- [ ] Play macro
-- [ ] Play macro multiple times / until end of file
+- [x] Record macro (keystrokes)
+- [x] Play macro
+- [x] Play macro multiple times / until end of file
 - [ ] Save macros with keyboard shortcuts
 - [ ] Edit/manage saved macros
 
@@ -196,37 +199,37 @@ Syntax highlighting and code folding for 80+ languages including:
 ## Phase 6: Encoding & Line Endings
 
 ### 6.1 Encoding Support
-- [ ] UTF-8 (with and without BOM)
+- [x] UTF-8 (with and without BOM)
 - [ ] UTF-16 LE/BE (with and without BOM)
-- [ ] ANSI / Windows codepages
+- [x] ANSI / Windows codepages
 - [ ] ISO-8859 family
-- [ ] Encoding display in status bar
-- [ ] Convert between encodings (menu action)
+- [x] Encoding display in status bar
+- [x] Convert between encodings (menu action)
 - [ ] Set default encoding for new files
 
 ### 6.2 Line Ending (EOL) Management
-- [ ] Windows (CRLF)
-- [ ] Unix/Linux (LF)
-- [ ] Old Mac (CR)
-- [ ] EOL display in status bar
-- [ ] Convert between line endings
+- [x] Windows (CRLF)
+- [x] Unix/Linux (LF)
+- [x] Old Mac (CR)
+- [x] EOL display in status bar
+- [x] Convert between line endings
 - [ ] Show/hide EOL characters
 - [ ] Set default EOL for new files
-- [ ] Mixed EOL detection and notification
+- [x] Mixed EOL detection and notification
 
 ---
 
 ## Phase 7: Navigation & Panels
 
 ### 7.1 Document Map (Mini-map)
-- [ ] Zoomed-out view of entire document
-- [ ] Click to navigate
-- [ ] Highlight visible region
+- [x] Zoomed-out view of entire document
+- [x] Click to navigate
+- [x] Highlight visible region
 
 ### 7.2 Function List Panel
-- [ ] List all functions/methods/classes in current file
-- [ ] Click to jump to definition
-- [ ] Language-aware parsing
+- [x] List all functions/methods/classes in current file
+- [x] Click to jump to definition
+- [x] Language-aware parsing
 
 ### 7.3 Folder as Workspace
 - [ ] Tree view of project directory
@@ -238,21 +241,26 @@ Syntax highlighting and code folding for 80+ languages including:
 - [ ] Browse filesystem
 - [ ] Favorites/bookmarks for directories
 
+### 7.5 Navigation Commands
+- [x] Go to Line (Ctrl+G)
+- [x] Command Palette (Ctrl+P)
+
 ---
 
 ## Phase 8: Appearance & Theming
 
 ### 8.1 Color Themes
-- [ ] Light and dark themes built-in
+- [x] Dark theme built-in
+- [ ] Light theme built-in
 - [ ] Simple color customization (background, foreground, selection, caret)
 - [ ] Per-language syntax colors
 - [ ] Import/export themes
 
 ### 8.2 Display Options
-- [ ] Show/hide whitespace characters
+- [x] Show/hide whitespace characters
 - [ ] Show/hide line endings
 - [ ] Show/hide indent guides
-- [ ] Zoom in/out (Ctrl+scroll wheel)
+- [x] Zoom in/out (Ctrl+scroll wheel)
 - [ ] Font family and size selection
 - [ ] Line spacing adjustment
 
@@ -261,21 +269,21 @@ Syntax highlighting and code folding for 80+ languages including:
 ## Phase 9: Built-in Tools
 
 ### 9.1 Markdown Viewer
-- [ ] Live preview panel for Markdown files
+- [x] Live preview panel for Markdown files
 - [ ] Synchronized scrolling with editor
 - [ ] Basic Markdown rendering (headings, bold, italic, links, images, code blocks, tables, lists)
 - [ ] Export to HTML
 
 ### 9.2 JSON Tools
-- [ ] Format/pretty-print JSON
-- [ ] Compact/minify JSON
-- [ ] Validate JSON (show errors)
+- [x] Format/pretty-print JSON
+- [x] Compact/minify JSON
+- [x] Validate JSON (show errors)
 - [ ] JSON tree viewer panel
 - [ ] JSON path navigation
 - [ ] Sort JSON keys
 
 ### 9.3 CSV Viewer/Editor
-- [ ] Tabular view for CSV files
+- [x] Tabular view for CSV files
 - [ ] Column alignment/colorization
 - [ ] Sort by column
 - [ ] Filter rows
@@ -284,16 +292,17 @@ Syntax highlighting and code folding for 80+ languages including:
 - [ ] Toggle between text and table view
 
 ### 9.4 File Comparison (Diff)
-- [ ] Side-by-side comparison of two files
+- [x] Side-by-side comparison of two files
 - [ ] Color-coded diff (added, removed, changed)
 - [ ] Navigate between differences
 - [ ] Merge changes between files
 
 ### 9.5 Hex Viewer/Editor
-- [ ] View file in hexadecimal
+- [x] View file in hexadecimal
 - [ ] Edit hex values
-- [ ] ASCII sidebar
+- [x] ASCII sidebar
 - [ ] Go to offset
+- [x] Toggle between text and hex view (Ctrl+Shift+H)
 
 ---
 
@@ -301,13 +310,13 @@ Syntax highlighting and code folding for 80+ languages including:
 
 ### 10.1 Printing & Export
 - [ ] Print with syntax highlighting
-- [ ] Export as HTML (with highlighting)
+- [x] Export as HTML (with highlighting)
 - [ ] Export as RTF
 - [ ] Line numbers in print output
 
 ### 10.2 MIME / Encoding Tools
-- [ ] Base64 encode/decode
-- [ ] URL encode/decode
+- [x] Base64 encode/decode
+- [x] URL encode/decode
 - [ ] Quoted-Printable encode/decode
 - [ ] SAML decode
 - [ ] HTML entity encode/decode
@@ -357,16 +366,17 @@ Syntax highlighting and code folding for 80+ languages including:
 ## Phase 12: Performance & Large Files
 
 ### 12.1 Large File Handling
-- [ ] Streaming/chunked file loading (files > 1GB)
+- [x] Streaming/chunked file loading (files > 1GB)
 - [ ] Memory-mapped file reading
 - [ ] Virtual scrolling (don't render what's off-screen)
-- [ ] Background file loading with progress
+- [x] Warning dialog for large files
+- [x] Auto-disable expensive features for large files
 
 ### 12.2 Performance Optimizations
-- [ ] Rope or piece-table data structure for text storage
+- [x] Rope data structure for text storage
 - [ ] Incremental syntax highlighting
 - [ ] Lazy line rendering
-- [ ] Efficient undo/redo (operation-based, not snapshot)
+- [x] Efficient undo/redo (operation-based, not snapshot)
 - [ ] Multi-threaded search
 
 ---
@@ -374,12 +384,14 @@ Syntax highlighting and code folding for 80+ languages including:
 ## Phase 13: Settings & Configuration
 
 ### 13.1 Preferences
+- [x] Preferences dialog
 - [ ] General settings (language, toolbar, tabs)
 - [ ] Editor settings (font, colors, behavior)
 - [ ] Search settings (defaults)
 - [ ] File association settings
 - [ ] Backup/auto-save settings
-- [ ] Keyboard shortcut customization
+- [x] Keyboard shortcut customization
+- [x] Configurable keybindings stored as JSON
 - [ ] Plugin settings
 
 ### 13.2 Portable Mode
