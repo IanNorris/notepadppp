@@ -39,7 +39,20 @@ pub struct NotepadApp {
 
 impl NotepadApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let tab_manager = TabManager::new();
+        Self::with_files(_cc, Vec::new())
+    }
+
+    pub fn with_files(_cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
+        let mut tab_manager = TabManager::new();
+        for file in &files {
+            if file.exists() {
+                let _ = tab_manager.open_file(file.clone());
+            }
+        }
+        // If files were opened, close the default empty tab
+        if !files.is_empty() && tab_manager.tab_count() > 1 {
+            tab_manager.close_tab(0);
+        }
         let text = tab_manager.active_document().buffer.text();
         Self {
             tab_manager,
