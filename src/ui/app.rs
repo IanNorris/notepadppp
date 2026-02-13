@@ -1,4 +1,4 @@
-use egui::{self, Align, Color32, Layout, RichText, Ui};
+use egui::{self, Align, Color32, Layout, Rect, RichText, Ui};
 use std::path::PathBuf;
 
 use crate::editor::document::{Encoding, LineEnding};
@@ -97,6 +97,10 @@ pub struct NotepadApp {
     last_file_check: std::time::Instant,
     /// Files needing reload confirmation
     files_changed_externally: Vec<std::path::PathBuf>,
+    /// Whether the minimap is shown
+    show_minimap: bool,
+    /// Whether to show the function list panel
+    show_function_list: bool,
     /// Find in Files dialog state
     show_find_in_files: bool,
     find_in_files_query: String,
@@ -185,6 +189,8 @@ impl NotepadApp {
             file_mod_times: std::collections::HashMap::new(),
             last_file_check: std::time::Instant::now(),
             files_changed_externally: Vec::new(),
+            show_minimap: false,
+            show_function_list: false,
             show_find_in_files: false,
             find_in_files_query: String::new(),
             find_in_files_dir: String::new(),
@@ -323,6 +329,8 @@ impl NotepadApp {
             ("Remove Duplicate Lines", ""),
             ("Trim Trailing Whitespace", ""),
             ("Jump to Matching Bracket", "Ctrl+]"),
+            ("Toggle Minimap", ""),
+            ("Toggle Function List", ""),
         ]
     }
 
@@ -396,6 +404,8 @@ impl NotepadApp {
                     }
                 }
             }
+            53 => { self.show_minimap = !self.show_minimap; }
+            54 => { self.show_function_list = !self.show_function_list; }
             _ => {}
         }
     }
@@ -859,6 +869,12 @@ impl NotepadApp {
                 ui.close_menu();
             }
             if ui.checkbox(&mut self.show_status_bar, "Status Bar").clicked() {
+                ui.close_menu();
+            }
+            if ui.checkbox(&mut self.show_minimap, "Minimap").clicked() {
+                ui.close_menu();
+            }
+            if ui.checkbox(&mut self.show_function_list, "Function List").clicked() {
                 ui.close_menu();
             }
             ui.separator();
@@ -1468,20 +1484,108 @@ impl NotepadApp {
     fn render_editor(&mut self, ui: &mut Ui) {
         self.sync_cache_from_buffer();
         let bookmarks = self.tab_manager.active_document().bookmarks.all_bookmarks();
-        editor_widget(
-            ui,
-            &mut self.text_cache,
-            self.font_size,
-            self.show_line_numbers,
-            self.word_wrap,
-            &self.search_results_matches,
-            self.current_match_index,
-            &self.syntax_highlighter,
-            &self.file_extension,
-            &bookmarks,
-            self.matching_bracket_pos,
-        );
+
+        if self.show_minimap {
+            let available = ui.available_size();
+            let minimap_width = 120.0;
+            let editor_width = available.x - minimap_width - 4.0;
+
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui(egui::vec2(editor_width, available.y), |ui| {
+                    editor_widget(
+                        ui,
+                        &mut self.text_cache,
+                        self.font_size,
+                        self.show_line_numbers,
+                        self.word_wrap,
+                        &self.search_results_matches,
+                        self.current_match_index,
+                        &self.syntax_highlighter,
+                        &self.file_extension,
+                        &bookmarks,
+                        self.matching_bracket_pos,
+                    );
+                });
+
+                // Minimap
+                ui.allocate_ui(egui::vec2(minimap_width, available.y), |ui| {
+                    self.render_minimap(ui);
+                });
+            });
+        } else {
+            editor_widget(
+                ui,
+                &mut self.text_cache,
+                self.font_size,
+                self.show_line_numbers,
+                self.word_wrap,
+                &self.search_results_matches,
+                self.current_match_index,
+                &self.syntax_highlighter,
+                &self.file_extension,
+                &bookmarks,
+                self.matching_bracket_pos,
+            );
+        }
         self.sync_buffer_from_cache();
+    }
+
+    fn render_minimap(&self, ui: &mut Ui) {
+        let text = &self.text_cache;
+        let lines: Vec<&str> = text.lines().collect();
+        let total_lines = lines.len().max(1);
+        let available = ui.available_size();
+        let mini_font_size = 2.0;
+        let line_height = mini_font_size + 0.5;
+        let total_height = total_lines as f32 * line_height;
+
+        let (rect, _response) = ui.allocate_exact_size(
+            egui::vec2(available.x, available.y),
+            egui::Sense::click(),
+        );
+
+        let painter = ui.painter_at(rect);
+
+        // Background
+        painter.rect_filled(rect, 0.0, Color32::from_gray(35));
+
+        // Draw lines as tiny colored bars
+        let scale_y = if total_height > available.y {
+            available.y / total_height
+        } else {
+            1.0
+        };
+
+        for (i, line) in lines.iter().enumerate() {
+            let y = rect.top() + (i as f32) * line_height * scale_y;
+            if y > rect.bottom() { break; }
+            let chars = line.len().min(120);
+            let width = (chars as f32 / 120.0) * available.x;
+            if width > 0.0 {
+                let color = Color32::from_rgba_premultiplied(180, 180, 180, 60);
+                painter.rect_filled(
+                    Rect::from_min_size(egui::pos2(rect.left(), y), egui::vec2(width, line_height * scale_y)),
+                    0.0,
+                    color,
+                );
+            }
+        }
+
+        // Highlight visible region
+        let cursor_line = self.tab_manager.active_document().cursor.position.line;
+        let visible_lines = (available.y / (self.font_size * 1.4)) as usize;
+        let view_start = cursor_line.saturating_sub(visible_lines / 2);
+        let view_end = (view_start + visible_lines).min(total_lines);
+        let view_y_start = rect.top() + (view_start as f32) * line_height * scale_y;
+        let view_y_end = rect.top() + (view_end as f32) * line_height * scale_y;
+        painter.rect_filled(
+            Rect::from_min_max(
+                egui::pos2(rect.left(), view_y_start),
+                egui::pos2(rect.right(), view_y_end),
+            ),
+            0.0,
+            Color32::from_rgba_premultiplied(100, 150, 255, 30),
+        );
     }
 
     fn render_status_bar(&self, ui: &mut Ui) {
@@ -1889,6 +1993,29 @@ impl eframe::App for NotepadApp {
                     self.current_match_index = Some(clicked);
                 }
             });
+        }
+
+        if self.show_function_list {
+            egui::SidePanel::left("function_list_panel")
+                .default_width(200.0)
+                .show(ctx, |ui| {
+                    ui.heading("Functions");
+                    ui.separator();
+                    self.sync_cache_from_buffer();
+                    let lang = self.tab_manager.active_document().language.clone();
+                    let symbols = crate::editor::function_list::extract_symbols(&self.text_cache, &lang);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for sym in &symbols {
+                            let label = format!("[{}] {}", sym.kind, sym.name);
+                            if ui.selectable_label(false, &label).clicked() {
+                                self.tab_manager.active_document_mut().cursor.set_position(sym.line, 0);
+                            }
+                        }
+                        if symbols.is_empty() {
+                            ui.label("No symbols found");
+                        }
+                    });
+                });
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
