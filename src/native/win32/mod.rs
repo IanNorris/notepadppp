@@ -7,6 +7,7 @@ pub mod scintilla;
 use std::path::PathBuf;
 
 use windows_sys::Win32::Foundation::*;
+use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::*;
@@ -272,6 +273,17 @@ pub fn run() {
 
         // Build accelerator table
         let h_accel = create_accelerators();
+
+        // Enable dark title bar (Windows 10 1809+ / DWMWA_USE_IMMERSIVE_DARK_MODE)
+        let use_dark: i32 = 1;
+        // Attribute 20 is DWMWA_USE_IMMERSIVE_DARK_MODE (pre-20H1), 
+        // 19 is the undocumented version used in older builds
+        DwmSetWindowAttribute(
+            hwnd,
+            20, // DWMWA_USE_IMMERSIVE_DARK_MODE
+            &use_dark as *const i32 as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
 
         // Init app state
         let state = Box::new(AppState {
@@ -650,6 +662,15 @@ unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         parts.len(),
         parts.as_ptr() as LPARAM,
     );
+
+    // Apply dark visual theme to controls (Windows 10+)
+    let dark_mode = wide("DarkMode_Explorer");
+    SetWindowTheme(s.hwnd_tab, dark_mode.as_ptr(), std::ptr::null());
+    SetWindowTheme(s.hwnd_status, dark_mode.as_ptr(), std::ptr::null());
+
+    // Dark background for the main window
+    let dark_brush = CreateSolidBrush(rgb(30, 30, 30) as u32);
+    SetClassLongPtrW(hwnd, GCL_HBRBACKGROUND, dark_brush as isize);
 
     update_status_bar();
 }

@@ -112,7 +112,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=lexilla");
     for lib in &[
         "user32", "gdi32", "imm32", "ole32", "oleaut32", "msimg32", "comctl32", "uuid", "d2d1",
-        "dwrite",
+        "dwrite", "dwmapi", "uxtheme",
     ] {
         println!("cargo:rustc-link-lib=dylib={lib}");
     }
@@ -129,5 +129,24 @@ fn main() {
             }
         }
         println!("cargo:rustc-link-lib=static=stdc++");
+    }
+
+    // Compile resource file (manifest for visual styles + DPI awareness)
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let rc_obj = std::path::Path::new(&out_dir).join("notepadppp.res.o");
+    let windres = if is_mingw {
+        "x86_64-w64-mingw32-windres"
+    } else {
+        "windres"
+    };
+    let rc_status = std::process::Command::new(windres)
+        .arg("notepadppp.rc")
+        .arg("-o")
+        .arg(&rc_obj)
+        .status();
+    if let Ok(status) = rc_status {
+        if status.success() {
+            println!("cargo:rustc-link-arg={}", rc_obj.display());
+        }
     }
 }
