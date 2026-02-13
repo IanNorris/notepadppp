@@ -81,6 +81,7 @@ impl KeyBinding {
             "-" => Some(egui::Key::Minus),
             "]" => Some(egui::Key::CloseBracket),
             "[" => Some(egui::Key::OpenBracket),
+            "/" => Some(egui::Key::Slash),
             "ArrowUp" => Some(egui::Key::ArrowUp),
             "ArrowDown" => Some(egui::Key::ArrowDown),
             "ArrowLeft" => Some(egui::Key::ArrowLeft),
@@ -156,6 +157,18 @@ impl KeyBindings {
         bindings.insert("toggle_hex_view".into(), KeyBinding::new("H", true, true, false));
         // Escape
         bindings.insert("escape".into(), KeyBinding::new("Escape", false, false, false));
+        // Line operations
+        bindings.insert("delete_line".into(), KeyBinding::new("K", true, true, false));
+        bindings.insert("join_lines".into(), KeyBinding::new("J", true, false, false));
+        // Case conversion
+        bindings.insert("case_upper".into(), KeyBinding::new("U", true, true, false));
+        bindings.insert("case_lower".into(), KeyBinding::new("U", true, false, false));
+        // Comment toggle
+        bindings.insert("toggle_comment".into(), KeyBinding::new("/", true, false, false));
+        // Select all occurrences
+        bindings.insert("select_all_occurrences".into(), KeyBinding::new("L", true, true, false));
+        // Folding
+        bindings.insert("toggle_fold".into(), KeyBinding::new("[", true, true, false));
         Self { bindings }
     }
 
@@ -232,7 +245,10 @@ impl KeyBindings {
             ("toggle_macro_recording", "Start/Stop Macro Recording"),
             ("play_last_macro", "Play Last Macro"),
             ("select_next", "Select Next Occurrence"),
+            ("select_all_occurrences", "Select All Occurrences"),
+            ("toggle_comment", "Toggle Comment"),
             ("toggle_hex_view", "Toggle Hex View"),
+            ("toggle_fold", "Toggle Fold"),
             ("escape", "Escape / Close"),
         ]
         .into_iter()

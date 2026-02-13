@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use super::bookmarks::BookmarkManager;
 use super::buffer::TextBuffer;
 use super::cursor::CursorState;
+use super::folding::FoldManager;
 use crate::io::large_file::LargeFileInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub struct Document {
     pub read_only: bool,
     pub bookmarks: BookmarkManager,
     pub large_file_info: LargeFileInfo,
+    pub fold_manager: FoldManager,
 }
 
 impl Default for Document {
@@ -63,6 +65,7 @@ impl Document {
             read_only: false,
             bookmarks: BookmarkManager::default(),
             large_file_info: LargeFileInfo::default(),
+            fold_manager: FoldManager::new(),
         }
     }
 

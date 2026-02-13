@@ -6,6 +6,15 @@ use crate::editor::column_select::ColumnSelection;
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::search::SearchMatch;
 
+/// Action triggered from the editor's right-click context menu.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContextMenuAction {
+    None,
+    ToggleComment,
+    Uppercase,
+    Lowercase,
+}
+
 /// Build a LayoutJob with syntax-highlighted spans for the given text.
 fn highlight_text(
     text: &str,
@@ -67,10 +76,11 @@ pub fn editor_widget(
     extra_cursors: &[usize],
     extra_selections: &[(usize, usize)],
     column_selection: &ColumnSelection,
-) {
+) -> ContextMenuAction {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
     let default_color = ui.visuals().text_color();
+    let mut ctx_action = ContextMenuAction::None;
 
     let ext = file_extension.to_string();
     let hl = highlighter;
@@ -136,6 +146,7 @@ pub fn editor_widget(
                     paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
                     paint_extra_selections(ui, &response, text, font_size, extra_selections);
                     paint_column_selection(ui, &response, font_size, column_selection);
+                    ctx_action = show_editor_context_menu(&response);
                 });
         });
     } else {
@@ -163,8 +174,11 @@ pub fn editor_widget(
                 paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
                 paint_extra_selections(ui, &response, text, font_size, extra_selections);
                 paint_column_selection(ui, &response, font_size, column_selection);
+                ctx_action = show_editor_context_menu(&response);
             });
     }
+
+    ctx_action
 }
 
 /// Paint colored rectangles over search match positions in the editor.
@@ -374,4 +388,56 @@ fn paint_column_selection(
             painter.rect_filled(rect, 1.0, sel_color);
         }
     }
+}
+
+/// Show the right-click context menu on the editor and return an action if selected.
+fn show_editor_context_menu(response: &egui::Response) -> ContextMenuAction {
+    let mut action = ContextMenuAction::None;
+    response.context_menu(|ui| {
+        if ui.button("Cut               Ctrl+X").clicked() {
+            ui.ctx().input_mut(|i| {
+                i.events.push(egui::Event::Cut);
+            });
+            ui.close_menu();
+        }
+        if ui.button("Copy              Ctrl+C").clicked() {
+            ui.ctx().input_mut(|i| {
+                i.events.push(egui::Event::Copy);
+            });
+            ui.close_menu();
+        }
+        if ui.button("Paste             Ctrl+V").clicked() {
+            ui.ctx().input_mut(|i| {
+                i.events.push(egui::Event::Paste(String::new()));
+            });
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("Select All        Ctrl+A").clicked() {
+            ui.ctx().input_mut(|i| {
+                i.events.push(egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                });
+            });
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("Toggle Comment    Ctrl+/").clicked() {
+            action = ContextMenuAction::ToggleComment;
+            ui.close_menu();
+        }
+        if ui.button("UPPERCASE      Ctrl+Shift+U").clicked() {
+            action = ContextMenuAction::Uppercase;
+            ui.close_menu();
+        }
+        if ui.button("lowercase         Ctrl+U").clicked() {
+            action = ContextMenuAction::Lowercase;
+            ui.close_menu();
+        }
+    });
+    action
 }

@@ -1,9 +1,12 @@
+pub mod autoclose;
 pub mod bookmarks;
 pub mod brackets;
 pub mod buffer;
 pub mod column_select;
+pub mod comments;
 pub mod cursor;
 pub mod document;
+pub mod folding;
 pub mod function_list;
 pub mod indent;
 pub mod macros;

@@ -16,7 +16,7 @@ use crate::tools::csv_viewer::CsvData;
 use crate::tools::diff_tool::DiffResult;
 use crate::tools::hex_viewer::HexView;
 
-use super::editor_widget::editor_widget;
+use super::editor_widget::{editor_widget, ContextMenuAction};
 use super::search_dialog::{self, SearchAction, SearchBarState};
 use super::split_view::{SplitOrientation, SplitView};
 
@@ -126,6 +126,8 @@ pub struct NotepadApp {
     pending_large_file: Option<PathBuf>,
     /// Size info for the pending large file
     pending_large_file_info: Option<crate::io::large_file::LargeFileInfo>,
+    /// Whether to show the fold margin (gutter indicators)
+    show_fold_margin: bool,
 }
 
 impl NotepadApp {
@@ -225,6 +227,7 @@ impl NotepadApp {
             show_large_file_warning: false,
             pending_large_file: None,
             pending_large_file_info: None,
+            show_fold_margin: true,
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -361,6 +364,25 @@ impl NotepadApp {
             ("Jump to Matching Bracket".into(), kb.display_shortcut("bracket_jump")),
             ("Toggle Minimap".into(), String::new()),
             ("Toggle Function List".into(), String::new()),
+            ("Join Lines".into(), kb.display_shortcut("join_lines")),
+            ("Split Line".into(), String::new()),
+            ("Insert Blank Line Above".into(), String::new()),
+            ("Insert Blank Line Below".into(), String::new()),
+            ("Reverse Line Order".into(), String::new()),
+            ("Sort Lines (Case Insensitive)".into(), String::new()),
+            ("Sort Lines (Numeric)".into(), String::new()),
+            ("Trim Leading Whitespace".into(), String::new()),
+            ("Trim Both Whitespace".into(), String::new()),
+            ("UPPERCASE".into(), kb.display_shortcut("case_upper")),
+            ("lowercase".into(), kb.display_shortcut("case_lower")),
+            ("Title Case".into(), String::new()),
+            ("Sentence case".into(), String::new()),
+            ("iNVERSE Case".into(), String::new()),
+            ("Toggle Comment".into(), kb.display_shortcut("toggle_comment")),
+            ("Select All Occurrences".into(), kb.display_shortcut("select_all_occurrences")),
+            ("Toggle Fold".into(), kb.display_shortcut("toggle_fold")),
+            ("Fold All".into(), String::new()),
+            ("Unfold All".into(), String::new()),
         ]
     }
 
@@ -436,6 +458,25 @@ impl NotepadApp {
             }
             53 => { self.show_minimap = !self.show_minimap; }
             54 => { self.show_function_list = !self.show_function_list; }
+            55 => self.line_op_join(),
+            56 => self.line_op_split(),
+            57 => self.line_op_insert_above(),
+            58 => self.line_op_insert_below(),
+            59 => self.line_op_reverse(),
+            60 => self.line_op_sort_case_insensitive(),
+            61 => self.line_op_sort_numeric(),
+            62 => self.line_op_trim_leading(),
+            63 => self.line_op_trim_both(),
+            64 => self.case_upper(),
+            65 => self.case_lower(),
+            66 => self.case_title(),
+            67 => self.case_sentence(),
+            68 => self.case_inverse(),
+            69 => self.line_op_toggle_comment(),
+            70 => self.action_select_all_occurrences(),
+            71 => self.action_toggle_fold(),
+            72 => self.action_fold_all(),
+            73 => self.action_unfold_all(),
             _ => {}
         }
     }
@@ -575,6 +616,33 @@ impl NotepadApp {
 
     fn action_zoom_reset(&mut self) {
         self.font_size = 14.0;
+    }
+
+    fn action_toggle_fold(&mut self) {
+        let line = self.tab_manager.active_document().cursor.position.line;
+        let text = self.tab_manager.active_document().buffer.text();
+        let doc = self.tab_manager.active_document_mut();
+        doc.fold_manager.detect_regions(&text);
+        doc.fold_manager.toggle_fold(line);
+    }
+
+    fn action_fold_all(&mut self) {
+        let text = self.tab_manager.active_document().buffer.text();
+        let doc = self.tab_manager.active_document_mut();
+        doc.fold_manager.detect_regions(&text);
+        doc.fold_manager.fold_all();
+    }
+
+    fn action_unfold_all(&mut self) {
+        self.tab_manager.active_document_mut().fold_manager.unfold_all();
+    }
+
+    fn action_fold_level(&mut self, level: usize) {
+        let text = self.tab_manager.active_document().buffer.text();
+        let doc = self.tab_manager.active_document_mut();
+        doc.fold_manager.detect_regions(&text);
+        doc.fold_manager.unfold_all();
+        doc.fold_manager.fold_level(level);
     }
 
     fn action_set_encoding(&mut self, enc: Encoding) {
@@ -803,6 +871,11 @@ impl NotepadApp {
                 ui.close_menu();
             }
             ui.separator();
+            if ui.button(format!("Toggle Comment {}", self.keybindings.display_shortcut("toggle_comment"))).clicked() {
+                self.line_op_toggle_comment();
+                ui.close_menu();
+            }
+            ui.separator();
             ui.menu_button("Line Operations", |ui| {
                 if ui.button("Duplicate Line").clicked() {
                     self.line_op_duplicate();
@@ -842,6 +915,65 @@ impl NotepadApp {
                     self.line_op_trim_trailing();
                     ui.close_menu();
                 }
+                ui.separator();
+                if ui.button("Join Lines").clicked() {
+                    self.line_op_join();
+                    ui.close_menu();
+                }
+                if ui.button("Split Line").clicked() {
+                    self.line_op_split();
+                    ui.close_menu();
+                }
+                if ui.button("Insert Blank Line Above").clicked() {
+                    self.line_op_insert_above();
+                    ui.close_menu();
+                }
+                if ui.button("Insert Blank Line Below").clicked() {
+                    self.line_op_insert_below();
+                    ui.close_menu();
+                }
+                if ui.button("Reverse Line Order").clicked() {
+                    self.line_op_reverse();
+                    ui.close_menu();
+                }
+                if ui.button("Sort Lines (Case Insensitive)").clicked() {
+                    self.line_op_sort_case_insensitive();
+                    ui.close_menu();
+                }
+                if ui.button("Sort Lines (Numeric)").clicked() {
+                    self.line_op_sort_numeric();
+                    ui.close_menu();
+                }
+                if ui.button("Trim Leading Whitespace").clicked() {
+                    self.line_op_trim_leading();
+                    ui.close_menu();
+                }
+                if ui.button("Trim Both Whitespace").clicked() {
+                    self.line_op_trim_both();
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Case Conversion", |ui| {
+                if ui.button("UPPERCASE").clicked() {
+                    self.case_upper();
+                    ui.close_menu();
+                }
+                if ui.button("lowercase").clicked() {
+                    self.case_lower();
+                    ui.close_menu();
+                }
+                if ui.button("Title Case").clicked() {
+                    self.case_title();
+                    ui.close_menu();
+                }
+                if ui.button("Sentence case").clicked() {
+                    self.case_sentence();
+                    ui.close_menu();
+                }
+                if ui.button("iNVERSE Case").clicked() {
+                    self.case_inverse();
+                    ui.close_menu();
+                }
             });
         });
     }
@@ -858,6 +990,10 @@ impl NotepadApp {
             }
             if ui.button("Find in Files...").clicked() {
                 self.show_find_in_files = true;
+                ui.close_menu();
+            }
+            if ui.button(format!("Select All Occurrences {}", self.keybindings.display_shortcut("select_all_occurrences"))).clicked() {
+                self.action_select_all_occurrences();
                 ui.close_menu();
             }
             ui.separator();
@@ -952,6 +1088,34 @@ impl NotepadApp {
                 self.action_zoom_reset();
                 ui.close_menu();
             }
+            ui.separator();
+            ui.menu_button("Folding", |ui| {
+                if ui.button("Toggle Fold  Ctrl+Shift+[").clicked() {
+                    self.action_toggle_fold();
+                    ui.close_menu();
+                }
+                if ui.button("Fold All").clicked() {
+                    self.action_fold_all();
+                    ui.close_menu();
+                }
+                if ui.button("Unfold All").clicked() {
+                    self.action_unfold_all();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Fold Level 1").clicked() {
+                    self.action_fold_level(0);
+                    ui.close_menu();
+                }
+                if ui.button("Fold Level 2").clicked() {
+                    self.action_fold_level(4);
+                    ui.close_menu();
+                }
+                if ui.button("Fold Level 3").clicked() {
+                    self.action_fold_level(8);
+                    ui.close_menu();
+                }
+            });
         });
     }
 
@@ -1554,6 +1718,7 @@ impl NotepadApp {
         };
         let minimap_allowed = self.show_minimap && !large_info.minimap_disabled;
 
+        let mut ctx_action = ContextMenuAction::None;
         if minimap_allowed {
             let available = ui.available_size();
             let minimap_width = 120.0;
@@ -1561,7 +1726,7 @@ impl NotepadApp {
 
             ui.horizontal_top(|ui| {
                 ui.allocate_ui(egui::vec2(editor_width, available.y), |ui| {
-                    editor_widget(
+                    ctx_action = editor_widget(
                         ui,
                         &mut self.text_cache,
                         self.font_size,
@@ -1585,7 +1750,7 @@ impl NotepadApp {
                 });
             });
         } else {
-            editor_widget(
+            ctx_action = editor_widget(
                 ui,
                 &mut self.text_cache,
                 self.font_size,
@@ -1601,6 +1766,12 @@ impl NotepadApp {
                 &extra_selections,
                 &self.column_selection,
             );
+        }
+        match ctx_action {
+            ContextMenuAction::ToggleComment => self.line_op_toggle_comment(),
+            ContextMenuAction::Uppercase => self.case_upper(),
+            ContextMenuAction::Lowercase => self.case_lower(),
+            ContextMenuAction::None => {}
         }
         self.sync_buffer_from_cache();
     }
@@ -1828,6 +1999,247 @@ impl NotepadApp {
         });
     }
 
+    fn line_op_join(&mut self) {
+        self.with_text_lines(|lines, cursor_line| {
+            if cursor_line < lines.len().saturating_sub(1) {
+                let next = lines.remove(cursor_line + 1);
+                lines[cursor_line].push_str(&next);
+            }
+            cursor_line
+        });
+    }
+
+    fn line_op_split(&mut self) {
+        let col = self.tab_manager.active_document().cursor.position.col;
+        self.with_text_lines(|lines, cursor_line| {
+            if cursor_line < lines.len() {
+                let current = &lines[cursor_line];
+                let split_at = col.min(current.len());
+                let rest = current[split_at..].to_string();
+                lines[cursor_line] = current[..split_at].to_string();
+                lines.insert(cursor_line + 1, rest);
+            }
+            cursor_line + 1
+        });
+    }
+
+    fn line_op_insert_above(&mut self) {
+        self.with_text_lines(|lines, cursor_line| {
+            lines.insert(cursor_line, String::new());
+            cursor_line
+        });
+    }
+
+    fn line_op_insert_below(&mut self) {
+        self.with_text_lines(|lines, cursor_line| {
+            lines.insert(cursor_line + 1, String::new());
+            cursor_line
+        });
+    }
+
+    fn line_op_reverse(&mut self) {
+        self.with_text_lines(|lines, _cursor_line| {
+            lines.reverse();
+            0
+        });
+    }
+
+    fn line_op_sort_case_insensitive(&mut self) {
+        self.with_text_lines(|lines, _cursor_line| {
+            lines.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            0
+        });
+    }
+
+    fn line_op_sort_numeric(&mut self) {
+        self.with_text_lines(|lines, _cursor_line| {
+            lines.sort_by(|a, b| {
+                let num_a = a.trim_start().split(|c: char| !c.is_ascii_digit() && c != '-' && c != '.').next()
+                    .and_then(|s| s.parse::<f64>().ok());
+                let num_b = b.trim_start().split(|c: char| !c.is_ascii_digit() && c != '-' && c != '.').next()
+                    .and_then(|s| s.parse::<f64>().ok());
+                match (num_a, num_b) {
+                    (Some(a), Some(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.cmp(b),
+                }
+            });
+            0
+        });
+    }
+
+    fn line_op_trim_leading(&mut self) {
+        self.with_text_lines(|lines, cursor_line| {
+            for line in lines.iter_mut() {
+                *line = line.trim_start().to_string();
+            }
+            cursor_line
+        });
+    }
+
+    fn line_op_trim_both(&mut self) {
+        self.with_text_lines(|lines, cursor_line| {
+            for line in lines.iter_mut() {
+                *line = line.trim().to_string();
+            }
+            cursor_line
+        });
+    }
+
+    fn line_op_toggle_comment(&mut self) {
+        let language = self.tab_manager.active_document().language.clone();
+        let prefix = match crate::editor::comments::line_comment_prefix(&language) {
+            Some(p) => p,
+            None => return,
+        };
+        let prefix_space = format!("{} ", prefix);
+        self.with_text_lines(|lines, cursor_line| {
+            if cursor_line < lines.len() {
+                let line = &lines[cursor_line];
+                let trimmed = line.trim_start();
+                if trimmed.starts_with(&prefix_space) {
+                    // Remove "// " (prefix + space)
+                    let indent = line.len() - trimmed.len();
+                    let rest = &trimmed[prefix_space.len()..];
+                    lines[cursor_line] = format!("{}{}", &line[..indent], rest);
+                } else if trimmed.starts_with(prefix) {
+                    // Remove "//" (prefix without space)
+                    let indent = line.len() - trimmed.len();
+                    let rest = &trimmed[prefix.len()..];
+                    lines[cursor_line] = format!("{}{}", &line[..indent], rest);
+                } else {
+                    // Add comment: insert prefix after leading whitespace
+                    let indent = line.len() - trimmed.len();
+                    lines[cursor_line] = format!("{}{} {}", &line[..indent], prefix, trimmed);
+                }
+            }
+            cursor_line
+        });
+    }
+
+    fn action_select_all_occurrences(&mut self) {
+        self.sync_cache_from_buffer();
+        let doc = self.tab_manager.active_document();
+
+        // Get search text from selection or word under cursor
+        let search_text = if let Some((start_pos, end_pos)) = doc.cursor.selected_range() {
+            let start_byte = doc.buffer.byte_offset(start_pos.line, start_pos.col).unwrap_or(0);
+            let end_byte = doc.buffer.byte_offset(end_pos.line, end_pos.col).unwrap_or(0);
+            if start_byte < end_byte && end_byte <= self.text_cache.len() {
+                self.text_cache[start_byte..end_byte].to_string()
+            } else {
+                return;
+            }
+        } else {
+            let byte_pos = doc.buffer.byte_offset(doc.cursor.position.line, doc.cursor.position.col)
+                .unwrap_or(0);
+            match crate::editor::multi_cursor::word_at_offset(&self.text_cache, byte_pos) {
+                Some((word, _, _)) => word,
+                None => return,
+            }
+        };
+
+        // Set the search query and trigger highlight
+        self.search_bar_state.query = search_text;
+        self.show_search_bar = true;
+        self.refresh_search_results();
+    }
+
+    // --- Case conversion ---
+
+    fn apply_case_transform(&mut self, transform: fn(&str) -> String) {
+        self.sync_cache_from_buffer();
+        let doc = self.tab_manager.active_document();
+        let cursor = &doc.cursor;
+
+        if let Some((start, end)) = cursor.selected_range() {
+            let start_byte = doc.buffer.byte_offset(start.line, start.col).unwrap_or(0);
+            let end_byte = doc.buffer.byte_offset(end.line, end.col).unwrap_or(self.text_cache.len());
+            let selected = &self.text_cache[start_byte..end_byte];
+            let transformed = transform(selected);
+            self.text_cache = format!(
+                "{}{}{}",
+                &self.text_cache[..start_byte],
+                transformed,
+                &self.text_cache[end_byte..]
+            );
+        } else {
+            // No selection: transform current line
+            let line = cursor.position.line;
+            let lines: Vec<&str> = self.text_cache.split('\n').collect();
+            if line < lines.len() {
+                let transformed = transform(lines[line]);
+                let mut new_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+                new_lines[line] = transformed;
+                self.text_cache = new_lines.join("\n");
+            }
+        }
+
+        self.sync_buffer_from_cache();
+        self.invalidate_cache();
+    }
+
+    fn case_upper(&mut self) {
+        self.apply_case_transform(|s| s.to_uppercase());
+    }
+
+    fn case_lower(&mut self) {
+        self.apply_case_transform(|s| s.to_lowercase());
+    }
+
+    fn case_title(&mut self) {
+        self.apply_case_transform(|s| {
+            let mut result = String::with_capacity(s.len());
+            let mut capitalize_next = true;
+            for c in s.chars() {
+                if c.is_whitespace() || c == '-' || c == '_' {
+                    capitalize_next = true;
+                    result.push(c);
+                } else if capitalize_next {
+                    result.extend(c.to_uppercase());
+                    capitalize_next = false;
+                } else {
+                    result.extend(c.to_lowercase());
+                }
+            }
+            result
+        });
+    }
+
+    fn case_sentence(&mut self) {
+        self.apply_case_transform(|s| {
+            let mut result = String::with_capacity(s.len());
+            let mut capitalize_next = true;
+            for c in s.chars() {
+                if c == '.' || c == '!' || c == '?' {
+                    capitalize_next = true;
+                    result.push(c);
+                } else if capitalize_next && c.is_alphabetic() {
+                    result.extend(c.to_uppercase());
+                    capitalize_next = false;
+                } else {
+                    result.extend(c.to_lowercase());
+                }
+            }
+            result
+        });
+    }
+
+    fn case_inverse(&mut self) {
+        self.apply_case_transform(|s| {
+            s.chars()
+                .map(|c| {
+                    if c.is_uppercase() {
+                        c.to_lowercase().to_string()
+                    } else {
+                        c.to_uppercase().to_string()
+                    }
+                })
+                .collect()
+        });
+    }
+
     // --- Bookmark actions ---
 
     fn action_toggle_bookmark(&mut self) {
@@ -2048,6 +2460,9 @@ impl NotepadApp {
         let command_palette = pressed("command_palette");
         let select_next = pressed("select_next");
         let toggle_hex_view = pressed("toggle_hex_view");
+        let toggle_comment = pressed("toggle_comment");
+        let select_all_occurrences = pressed("select_all_occurrences");
+        let toggle_fold = pressed("toggle_fold");
 
         if new_file { self.action_new(); }
         if open_file { self.action_open(); }
@@ -2113,6 +2528,44 @@ impl NotepadApp {
         if toggle_hex_view {
             self.action_toggle_hex_view();
         }
+        if toggle_comment {
+            if let Some(binding) = kb.bindings.get("toggle_comment") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
+            self.line_op_toggle_comment();
+        }
+        if select_all_occurrences {
+            if let Some(binding) = kb.bindings.get("select_all_occurrences") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
+            self.action_select_all_occurrences();
+        }
+        if toggle_fold {
+            if let Some(binding) = kb.bindings.get("toggle_fold") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
+            self.action_toggle_fold();
+        }
+
+        // Line and case shortcuts
+        let delete_line = pressed("delete_line");
+        let join_lines = pressed("join_lines");
+        let case_upper = pressed("case_upper");
+        let case_lower = pressed("case_lower");
+
+        if delete_line { self.line_op_delete(); }
+        if join_lines { self.line_op_join(); }
+        if case_upper { self.case_upper(); }
+        else if case_lower { self.case_lower(); }
 
         // Alt+Shift+Arrow for column selection
         let alt_shift_up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.alt && i.modifiers.shift);

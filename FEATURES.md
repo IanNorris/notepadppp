@@ -37,7 +37,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [x] Menu bar with standard menus (File, Edit, Search, View, Encoding, Language, Settings, Window, Help)
 - [ ] Toolbar with common actions
 - [x] Status bar (encoding, line ending, cursor position, file size, language)
-- [ ] Context menu on right-click
+- [x] Context menu on right-click
 
 ---
 
@@ -71,7 +71,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [x] Replace (Ctrl+H)
 - [x] Options: match case, whole word, wrap around
 - [x] Search modes: normal, extended (escape sequences), regex
-- [ ] Count occurrences
+- [x] Count occurrences
 - [x] Find next / find previous (F3 / Shift+F3)
 - [x] Incremental search (find as you type)
 - [x] Highlight all matches in document
@@ -127,10 +127,10 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] And more...
 
 ### 4.2 Code Folding
-- [ ] Fold/unfold code blocks
-- [ ] Fold all / unfold all
-- [ ] Fold level (1-9)
-- [ ] Fold margin with +/- indicators
+- [x] Fold/unfold code blocks
+- [x] Fold all / unfold all
+- [x] Fold level (1-9)
+- [x] Fold margin with +/- indicators
 
 ### 4.3 Bracket Matching
 - [x] Matching bracket highlight
@@ -152,39 +152,39 @@ Syntax highlighting for 80+ languages (via syntect) including:
 ### 5.2 Multi-Cursor / Multi-Selection
 - [x] Ctrl+click to add cursors
 - [x] Ctrl+D to select next occurrence
-- [ ] Select all occurrences
+- [x] Select all occurrences
 - [x] Type at all cursors simultaneously
 
 ### 5.3 Line Operations
-- [ ] Duplicate line (Ctrl+D)
-- [ ] Delete line (Ctrl+Shift+K)
+- [x] Duplicate line (Ctrl+D)
+- [x] Delete line (Ctrl+Shift+K)
 - [x] Move line up/down (Ctrl+Shift+Up/Down)
-- [ ] Join lines
-- [ ] Split lines
+- [x] Join lines
+- [x] Split lines
 - [x] Sort lines ascending/descending
-- [ ] Sort lines case-insensitive
-- [ ] Sort lines numerically
+- [x] Sort lines case-insensitive
+- [x] Sort lines numerically
 - [ ] Sort lines by column
 - [x] Remove duplicate lines
 - [ ] Remove empty lines
 - [ ] Remove empty lines (containing blank characters)
-- [ ] Insert blank line above/below
-- [ ] Reverse line order
+- [x] Insert blank line above/below
+- [x] Reverse line order
 
 ### 5.4 Text Transformations
-- [ ] Convert case: UPPER, lower, Title, Sentence, iNVERSE
-- [ ] Trim trailing whitespace
-- [ ] Trim leading whitespace
-- [ ] Trim both
+- [x] Convert case: UPPER, lower, Title, Sentence, iNVERSE
+- [x] Trim trailing whitespace
+- [x] Trim leading whitespace
+- [x] Trim both
 - [x] Tab to spaces / spaces to tabs conversion
-- [ ] Comment/uncomment line (language-aware)
+- [x] Comment/uncomment line (language-aware)
 - [ ] Block comment/uncomment
 - [x] Auto-indent
 
 ### 5.5 Auto-Completion
 - [ ] Word completion (from current document)
 - [ ] Function/parameter hints (for supported languages)
-- [ ] Bracket/quote auto-close
+- [x] Bracket/quote auto-close
 - [x] Matching bracket highlight
 
 ### 5.6 Macro Recording & Playback
