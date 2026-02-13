@@ -157,6 +157,9 @@ const ID_STATUS_BAR: i32 = 1001;
 const ID_SCINTILLA: i32 = 1002;
 const ID_SCINTILLA2: i32 = 1003;
 
+// WM_SETFONT
+const WM_SETFONT: u32 = 0x0030;
+
 // WM_NOTIFY codes for tab control
 const TCN_FIRST: i32 = -550;
 const TCN_SELCHANGE: i32 = TCN_FIRST - 1;
@@ -191,6 +194,8 @@ struct AppState {
     hwnd_scintilla2: HWND,
     hwnd_status: HWND,
     h_accel: HACCEL,
+    ui_font: HFONT,
+    ui_font_small: HFONT,
     tabs: Vec<TabDocument>,
     active_tab: usize,
     untitled_counter: usize,
@@ -205,6 +210,7 @@ struct AppState {
     hex_original: Vec<u8>,
     recording: bool,
     macro_buffer: Vec<(u32, usize, isize)>,
+    sb_texts: [Vec<u16>; 4], // Persistent storage for status bar text (owner-drawn)
 }
 
 static mut APP: *mut AppState = std::ptr::null_mut();
@@ -243,6 +249,20 @@ unsafe fn apply_dark_title_bar(hwnd: HWND) {
         &use_dark as *const i32 as *const _,
         std::mem::size_of::<i32>() as u32,
     );
+}
+
+/// Apply a font to a window control via WM_SETFONT.
+unsafe fn apply_font(hwnd: HWND, font: HFONT) {
+    SendMessageW(hwnd, WM_SETFONT, font as usize, 1);
+}
+
+/// Apply a font to all child controls of a dialog.
+unsafe fn apply_font_to_children(parent: HWND, font: HFONT) {
+    let mut child = GetWindow(parent, GW_CHILD);
+    while !child.is_null() {
+        apply_font(child, font);
+        child = GetWindow(child, GW_HWNDNEXT);
+    }
 }
 
 // ── Entry point ──
@@ -335,6 +355,8 @@ pub fn run() {
             hwnd_scintilla2: std::ptr::null_mut(),
             hwnd_status: std::ptr::null_mut(),
             h_accel,
+            ui_font: std::ptr::null_mut(),
+            ui_font_small: std::ptr::null_mut(),
             tabs: Vec::new(),
             active_tab: 0,
             untitled_counter: 0,
@@ -349,6 +371,7 @@ pub fn run() {
             hex_original: Vec::new(),
             recording: false,
             macro_buffer: Vec::new(),
+            sb_texts: [vec![0], vec![0], vec![0], vec![0]],
         });
         APP = Box::into_raw(state);
 
@@ -357,6 +380,26 @@ pub fn run() {
 
         // Create child controls
         create_controls(hwnd, hinstance);
+
+        // Create UI fonts: Segoe UI 9pt and 8pt
+        let font_name = wide("Segoe UI");
+        let ui_font = CreateFontW(
+            -14, 0, 0, 0, 400, 0, 0, 0,
+            1, 0, 0, 5, 0,
+            font_name.as_ptr(),
+        );
+        let ui_font_small = CreateFontW(
+            -12, 0, 0, 0, 400, 0, 0, 0,
+            1, 0, 0, 5, 0,
+            font_name.as_ptr(),
+        );
+        {
+            let s = app();
+            s.ui_font = ui_font;
+            s.ui_font_small = ui_font_small;
+            apply_font(s.hwnd_tab, ui_font);
+            apply_font(s.hwnd_status, ui_font_small);
+        }
 
         // Accept drag-and-drop files
         DragAcceptFiles(hwnd, TRUE);
@@ -649,7 +692,7 @@ unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         0,
         0,
         800,
-        28,
+        26,
         hwnd,
         ID_TAB_CONTROL as isize as HMENU,
         hinstance,
@@ -664,7 +707,7 @@ unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
         std::ptr::null(),
         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
         0,
-        28,
+        26,
         800,
         500,
         hwnd,
@@ -820,7 +863,7 @@ unsafe fn on_size(hwnd: HWND) {
     let sb_h = sb_rect.bottom - sb_rect.top;
 
     // Tab control
-    let tab_h: i32 = 28;
+    let tab_h: i32 = 26;
     MoveWindow(s.hwnd_tab, 0, 0, w, tab_h, TRUE);
 
     // Scintilla fills between tab and status bar
@@ -1522,8 +1565,8 @@ unsafe fn cmd_goto_line() {
 
 /// Show a simple "Go to Line" dialog.
 unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
-    // We use a simple approach: create a window class for the dialog
     let hinstance = GetModuleHandleW(std::ptr::null());
+    let font = app().ui_font;
 
     // Store targets in statics for the dialog proc
     static mut DLG_SCI: HWND = std::ptr::null_mut();
@@ -1557,8 +1600,8 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        280,
-        130,
+        300,
+        140,
         parent,
         std::ptr::null_mut(),
         hinstance,
@@ -1570,13 +1613,13 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
 
     // Create child controls
     let label_class = wide("STATIC");
-    let label_text = wide(&format!("Line number (1-{max_line}):"));
+    let label_text = wide(&format!("Enter line number (1-{max_line}):"));
     CreateWindowExW(
         0,
         label_class.as_ptr(),
         label_text.as_ptr(),
         WS_CHILD | WS_VISIBLE,
-        10, 10, 250, 20,
+        12, 12, 270, 20,
         dlg,
         std::ptr::null_mut(),
         hinstance,
@@ -1589,7 +1632,7 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         edit_class.as_ptr(),
         std::ptr::null(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x2000, // ES_NUMBER
-        10, 35, 250, 22,
+        12, 38, 270, 24,
         dlg,
         100 as isize as HMENU,
         hinstance,
@@ -1597,19 +1640,20 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
     );
 
     let btn_class = wide("BUTTON");
-    let btn_text = wide("Go");
+    let btn_text = wide("OK");
     CreateWindowExW(
         0,
         btn_class.as_ptr(),
         btn_text.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0001, // BS_DEFPUSHBUTTON
-        100, 65, 80, 28,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000, // BS_FLAT
+        110, 72, 75, 28,
         dlg,
         1 as isize as HMENU, // IDOK
         hinstance,
         std::ptr::null(),
     );
 
+    apply_font_to_children(dlg, font);
     SetFocus(DLG_EDIT);
 
     // Enable parent window disabled for modality
@@ -2016,7 +2060,7 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
     };
     RegisterClassExW(&wc);
 
-    let dlg_h = if show_replace { 280 } else { 250 };
+    let dlg_h = if show_replace { 320 } else { 280 };
     let title_str = if show_replace { "Replace" } else { "Find" };
     let title = wide(title_str);
     let dlg = CreateWindowExW(
@@ -2024,7 +2068,7 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
         class_name.as_ptr(),
         title.as_ptr(),
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 420, dlg_h,
+        CW_USEDEFAULT, CW_USEDEFAULT, 500, dlg_h,
         s.hwnd_main,
         std::ptr::null_mut(),
         hinstance,
@@ -2038,47 +2082,55 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
 
+    // Layout constants
+    let margin = 12;
+    let label_w = 85;
+    let edit_x = margin + label_w + 4;
+    let btn_col_x = 500 - margin - 95 - 12; // right column for buttons
+    let edit_w = btn_col_x - edit_x - 8;
+
     // Find label + edit
     let lbl = wide("Find what:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 10, 80, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 2, label_w, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
 
     let find_edit = CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080/*ES_AUTOHSCROLL*/,
-        95, 8, 305, 22, dlg,
+        edit_x, margin, edit_w, 24, dlg,
         IDC_FIND_EDIT as isize as HMENU, hinstance, std::ptr::null());
 
     // Replace label + edit
     let lbl = wide("Replace with:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 38, 80, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 34, label_w, 20, dlg,
         IDC_REPLACE_LABEL as isize as HMENU, hinstance, std::ptr::null());
 
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
-        95, 36, 305, 22, dlg,
+        edit_x, margin + 32, edit_w, 24, dlg,
         IDC_REPLACE_EDIT as isize as HMENU, hinstance, std::ptr::null());
 
-    // Buttons row
-    let y_btns = 66;
-    let mk_btn = |text: &str, x: i32, id: i32, def: bool| {
+    // Buttons in right column
+    let btn_w = 95;
+    let btn_h = 28;
+    let btn_gap = 6;
+    let btn_y_start = margin;
+    let mk_btn = |text: &str, y: i32, id: i32, primary: bool| {
         let w = wide(text);
-        let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | if def { 0x0001 } else { 0 };
+        let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000/*BS_FLAT*/
+            | if primary { 0x0001 } else { 0 };
         CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
-            x, y_btns, 90, 26, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+            btn_col_x, y, btn_w, btn_h, dlg, id as isize as HMENU, hinstance, std::ptr::null());
     };
-    mk_btn("Find Next", 10, IDC_FIND_NEXT, true);
-    mk_btn("Count", 105, IDC_COUNT, false);
-    mk_btn("Find All", 200, IDC_FIND_ALL, false);
+    mk_btn("Find Next", btn_y_start, IDC_FIND_NEXT, true);
+    mk_btn("Count", btn_y_start + btn_h + btn_gap, IDC_COUNT, false);
+    mk_btn("Find All", btn_y_start + 2 * (btn_h + btn_gap), IDC_FIND_ALL, false);
+    mk_btn("Replace", btn_y_start + 3 * (btn_h + btn_gap), IDC_REPLACE_BTN, false);
+    mk_btn("Replace All", btn_y_start + 4 * (btn_h + btn_gap), IDC_REPLACE_ALL, false);
 
-    // Replace buttons row
-    let y_rep = y_btns + 30;
-    mk_btn("Replace", 10, IDC_REPLACE_BTN, false);
-    mk_btn("Replace All", 105, IDC_REPLACE_ALL, false);
-
-    // Checkboxes
-    let y_chk = y_rep + 36;
+    // Checkboxes below edit fields
+    let y_chk = margin + 66;
     let mk_chk = |text: &str, x: i32, y: i32, w_px: i32, id: i32, checked: bool| {
         let w = wide(text);
         let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003/*BS_AUTOCHECKBOX*/;
@@ -2088,33 +2140,33 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
             SendMessageW(h, 0x00F1/*BM_SETCHECK*/, 1/*BST_CHECKED*/, 0);
         }
     };
-    mk_chk("Match case", 10, y_chk, 130, IDC_MATCH_CASE, false);
-    mk_chk("Whole word", 145, y_chk, 130, IDC_WHOLE_WORD, false);
-    mk_chk("Regular expression", 10, y_chk + 22, 160, IDC_REGEX, false);
-    mk_chk("Wrap around", 175, y_chk + 22, 130, IDC_WRAP_AROUND, true);
+    mk_chk("Match case", margin, y_chk, 130, IDC_MATCH_CASE, false);
+    mk_chk("Whole word", margin + 135, y_chk, 130, IDC_WHOLE_WORD, false);
+    mk_chk("Regular expression", margin, y_chk + 24, 160, IDC_REGEX, false);
+    mk_chk("Wrap around", margin + 170, y_chk + 24, 130, IDC_WRAP_AROUND, true);
 
     // Direction radio buttons
-    let y_dir = y_chk + 50;
+    let y_dir = y_chk + 56;
     let lbl = wide("Direction:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, y_dir, 70, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, y_dir, 70, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
 
     let w = wide("Up");
     CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0009/*BS_AUTORADIOBUTTON | WS_GROUP*/,
-        80, y_dir, 50, 20, dlg, IDC_DIR_UP as isize as HMENU, hinstance, std::ptr::null());
+        margin + 75, y_dir, 50, 20, dlg, IDC_DIR_UP as isize as HMENU, hinstance, std::ptr::null());
 
     let w = wide("Down");
     let h_down = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0009,
-        135, y_dir, 60, 20, dlg, IDC_DIR_DOWN as isize as HMENU, hinstance, std::ptr::null());
+        margin + 130, y_dir, 60, 20, dlg, IDC_DIR_DOWN as isize as HMENU, hinstance, std::ptr::null());
     SendMessageW(h_down, 0x00F1/*BM_SETCHECK*/, 1, 0);
 
     // Status label
     let lbl = wide("");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 200, y_dir, 200, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin + 200, y_dir, 200, 20, dlg,
         IDC_STATUS_LABEL as isize as HMENU, hinstance, std::ptr::null());
 
     // Pre-fill find text if there was a selection
@@ -2123,6 +2175,7 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
         SetWindowTextW(find_edit, w.as_ptr());
     }
 
+    apply_font_to_children(dlg, app().ui_font);
     find_dlg_update_replace_visibility();
     SetFocus(find_edit);
 }
@@ -2141,10 +2194,10 @@ unsafe fn find_dlg_update_replace_visibility() {
     }
 
     // Resize dialog
-    let h = if show { 280 } else { 250 };
+    let h = if show { 320 } else { 280 };
     let mut rc: RECT = std::mem::zeroed();
     GetWindowRect(dlg, &mut rc);
-    MoveWindow(dlg, rc.left, rc.top, 420, h, TRUE);
+    MoveWindow(dlg, rc.left, rc.top, 500, h, TRUE);
 
     let title = if show { "Replace" } else { "Find" };
     let w = wide(title);
@@ -3198,7 +3251,7 @@ unsafe fn cmd_find_in_files_dialog() {
         class_name.as_ptr(),
         title.as_ptr(),
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 480, 260,
+        CW_USEDEFAULT, CW_USEDEFAULT, 520, 260,
         s.hwnd_main,
         std::ptr::null_mut(),
         hinstance,
@@ -3213,20 +3266,24 @@ unsafe fn cmd_find_in_files_dialog() {
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
 
+    let margin = 12;
+    let label_w = 75;
+    let edit_x = margin + label_w + 4;
+
     // Find what
     let lbl = wide("Find what:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 12, 70, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 2, label_w, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
-        85, 10, 375, 22, dlg,
+        edit_x, margin, 520 - edit_x - margin, 24, dlg,
         IDC_FIF_FIND_EDIT as isize as HMENU, hinstance, std::ptr::null());
 
     // Directory
     let lbl = wide("Directory:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 42, 70, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 34, label_w, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
     // Pre-fill with the directory of the current file if available
     let dir_default = {
@@ -3242,49 +3299,50 @@ unsafe fn cmd_find_in_files_dialog() {
     let dir_w = wide(&dir_default);
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), dir_w.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
-        85, 40, 295, 22, dlg,
+        edit_x, margin + 32, 520 - edit_x - margin - 85, 24, dlg,
         IDC_FIF_DIR_EDIT as isize as HMENU, hinstance, std::ptr::null());
 
     let lbl = wide("Browse...");
     CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        385, 39, 75, 24, dlg,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000,
+        520 - margin - 78, margin + 31, 78, 28, dlg,
         IDC_FIF_BROWSE as isize as HMENU, hinstance, std::ptr::null());
 
     // Filter
     let lbl = wide("Filter:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 72, 70, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 66, label_w, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
     let default_filter = wide("*.*");
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), default_filter.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
-        85, 70, 375, 22, dlg,
+        edit_x, margin + 64, 520 - edit_x - margin, 24, dlg,
         IDC_FIF_FILTER_EDIT as isize as HMENU, hinstance, std::ptr::null());
 
     // Checkboxes
-    let y_chk = 102;
+    let y_chk = margin + 98;
     let mk_chk = |text: &str, x: i32, y: i32, id: i32, checked: bool| {
         let w = wide(text);
         let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003;
         let h = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
-            x, y, 130, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+            x, y, 140, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
         if checked {
             SendMessageW(h, 0x00F1, 1, 0);
         }
     };
-    mk_chk("Match case", 10, y_chk, IDC_FIF_MATCH_CASE, false);
-    mk_chk("Whole word", 145, y_chk, IDC_FIF_WHOLE_WORD, false);
-    mk_chk("Regular expression", 280, y_chk, IDC_FIF_REGEX, false);
-    mk_chk("Recursive", 10, y_chk + 24, IDC_FIF_RECURSIVE, true);
+    mk_chk("Match case", margin, y_chk, IDC_FIF_MATCH_CASE, false);
+    mk_chk("Whole word", margin + 145, y_chk, IDC_FIF_WHOLE_WORD, false);
+    mk_chk("Regular expression", margin + 290, y_chk, IDC_FIF_REGEX, false);
+    mk_chk("Recursive", margin, y_chk + 24, IDC_FIF_RECURSIVE, true);
 
     // Find All button
     let lbl = wide("Find All");
     CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0001,
-        190, y_chk + 55, 100, 30, dlg,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000,
+        520 / 2 - 50, y_chk + 58, 100, 28, dlg,
         IDC_FIF_FIND_ALL as isize as HMENU, hinstance, std::ptr::null());
 
+    apply_font_to_children(dlg, app().ui_font);
     SetFocus(GetDlgItem(dlg, IDC_FIF_FIND_EDIT));
 }
 
@@ -3454,7 +3512,7 @@ unsafe fn cmd_preferences_dialog() {
         class_name.as_ptr(),
         title.as_ptr(),
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 320, 230,
+        CW_USEDEFAULT, CW_USEDEFAULT, 340, 240,
         s.hwnd_main,
         std::ptr::null_mut(),
         hinstance,
@@ -3475,33 +3533,35 @@ unsafe fn cmd_preferences_dialog() {
     let cur_use_tabs = sci_send(s.hwnd_scintilla, SCI_GETUSETABS, 0, 0) != 0;
     let cur_fold_margin = sci_send(s.hwnd_scintilla, SCI_GETMARGINWIDTHN, 2, 0) > 0;
 
+    let margin = 12;
+
     // Font size
     let lbl = wide("Font size:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 14, 90, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 2, 100, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
     let val = wide(&cur_font_size.to_string());
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), val.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x2000,
-        110, 12, 60, 22, dlg,
+        margin + 110, margin, 60, 24, dlg,
         IDC_PREF_FONT_SIZE as isize as HMENU, hinstance, std::ptr::null());
 
     // Tab size
     let lbl = wide("Tab size:");
     CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE, 10, 44, 90, 20, dlg,
+        WS_CHILD | WS_VISIBLE, margin, margin + 34, 100, 20, dlg,
         std::ptr::null_mut(), hinstance, std::ptr::null());
     let val = wide(&cur_tab_width.to_string());
     CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), val.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x2000,
-        110, 42, 60, 22, dlg,
+        margin + 110, margin + 32, 60, 24, dlg,
         IDC_PREF_TAB_SIZE as isize as HMENU, hinstance, std::ptr::null());
 
     // Use spaces for tabs
     let lbl = wide("Use spaces for tabs");
     let h = CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003,
-        10, 76, 180, 20, dlg,
+        margin, margin + 68, 200, 20, dlg,
         IDC_PREF_USE_SPACES as isize as HMENU, hinstance, std::ptr::null());
     if !cur_use_tabs {
         SendMessageW(h, 0x00F1, 1, 0);
@@ -3511,7 +3571,7 @@ unsafe fn cmd_preferences_dialog() {
     let lbl = wide("Show fold margin");
     let h = CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003,
-        10, 102, 180, 20, dlg,
+        margin, margin + 94, 200, 20, dlg,
         IDC_PREF_FOLD_MARGIN as isize as HMENU, hinstance, std::ptr::null());
     if cur_fold_margin {
         SendMessageW(h, 0x00F1, 1, 0);
@@ -3520,16 +3580,17 @@ unsafe fn cmd_preferences_dialog() {
     // OK / Cancel
     let lbl = wide("OK");
     CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0001,
-        60, 145, 80, 28, dlg,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000,
+        340 / 2 - 85, margin + 130, 75, 28, dlg,
         IDC_PREF_OK as isize as HMENU, hinstance, std::ptr::null());
 
     let lbl = wide("Cancel");
     CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        170, 145, 80, 28, dlg,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x8000,
+        340 / 2 + 10, margin + 130, 75, 28, dlg,
         IDC_PREF_CANCEL as isize as HMENU, hinstance, std::ptr::null());
 
+    apply_font_to_children(dlg, s.ui_font);
     EnableWindow(s.hwnd_main, FALSE);
 }
 
@@ -3645,9 +3706,11 @@ unsafe fn update_status_bar() {
 }
 
 unsafe fn set_sb_text(hwnd: HWND, part: usize, text: &str) {
+    let s = app();
     let w = wide(text);
+    s.sb_texts[part] = w;
     // SBT_OWNERDRAW = 0x1000 — triggers WM_DRAWITEM for custom painting
-    SendMessageW(hwnd, SB_SETTEXTW, part | 0x1000, w.as_ptr() as LPARAM);
+    SendMessageW(hwnd, SB_SETTEXTW, part | 0x1000, s.sb_texts[part].as_ptr() as LPARAM);
 }
 
 // ── Utility ──
