@@ -62,6 +62,7 @@ pub fn editor_widget(
     highlighter: &SyntaxHighlighter,
     file_extension: &str,
     bookmarked_lines: &[usize],
+    matching_bracket_pos: Option<usize>,
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
@@ -125,6 +126,9 @@ pub fn editor_widget(
                         editor,
                     );
                     paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
+                    if let Some(match_pos) = matching_bracket_pos {
+                        paint_bracket_highlight(ui, &response, text, font_size, match_pos);
+                    }
                 });
         });
     } else {
@@ -146,6 +150,9 @@ pub fn editor_widget(
                     editor,
                 );
                 paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
+                if let Some(match_pos) = matching_bracket_pos {
+                    paint_bracket_highlight(ui, &response, text, font_size, match_pos);
+                }
             });
     }
 }
@@ -209,4 +216,28 @@ fn gutter_width_for(line_count: usize, font_size: f32) -> f32 {
     let digits = digit_count(line_count);
     // Approximate: each digit is ~0.6 * font_size wide for monospace, plus padding
     (digits as f32) * font_size * 0.6 + 16.0
+}
+
+fn paint_bracket_highlight(
+    ui: &Ui,
+    response: &egui::Response,
+    text: &str,
+    font_size: f32,
+    byte_pos: usize,
+) {
+    let painter = ui.painter();
+    let text_rect = response.rect;
+    let char_width = font_size * 0.6;
+    let line_height = font_size * 1.4;
+    let text_origin = egui::pos2(text_rect.left() + 4.0, text_rect.top() + 2.0);
+
+    let line = text[..byte_pos].matches('\n').count();
+    let col = col_in_line(text, byte_pos);
+    let y = text_origin.y + (line as f32) * line_height;
+    let x = text_origin.x + (col as f32) * char_width;
+    let rect = Rect::from_min_size(egui::pos2(x, y), egui::vec2(char_width, line_height));
+
+    if rect.intersects(text_rect) {
+        painter.rect_stroke(rect, 2.0, egui::Stroke::new(2.0, Color32::from_rgb(100, 180, 255)), egui::StrokeKind::Outside);
+    }
 }

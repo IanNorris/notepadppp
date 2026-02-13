@@ -81,6 +81,8 @@ pub struct NotepadApp {
     show_preferences: bool,
     /// Application settings
     app_settings: crate::io::settings::AppSettings,
+    /// Byte position of the matching bracket (if any)
+    matching_bracket_pos: Option<usize>,
 }
 
 impl NotepadApp {
@@ -155,6 +157,7 @@ impl NotepadApp {
                 &crate::io::settings::AppSettings::settings_path(),
             )
             .unwrap_or_default(),
+            matching_bracket_pos: None,
         }
     }
 
@@ -1291,6 +1294,7 @@ impl NotepadApp {
             &self.syntax_highlighter,
             &self.file_extension,
             &bookmarks,
+            self.matching_bracket_pos,
         );
         self.sync_buffer_from_cache();
     }
@@ -1569,6 +1573,7 @@ impl NotepadApp {
         let shift_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.shift && !i.modifiers.ctrl);
         let ctrl_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.ctrl && !i.modifiers.shift);
         let ctrl_g = ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.ctrl && !i.modifiers.shift);
+        let ctrl_bracket = ctx.input(|i| i.key_pressed(egui::Key::CloseBracket) && i.modifiers.ctrl);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1598,12 +1603,31 @@ impl NotepadApp {
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::G));
             self.action_goto_line();
         }
+        if ctrl_bracket {
+            if let Some(match_byte_pos) = self.matching_bracket_pos {
+                let doc = self.tab_manager.active_document();
+                if let Some((line, col)) = doc.buffer.line_col(match_byte_pos) {
+                    self.tab_manager.active_document_mut().cursor.set_position(line, col);
+                }
+            }
+        }
     }
 }
 
 impl eframe::App for NotepadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_keyboard_shortcuts(ctx);
+
+        // Update bracket matching
+        {
+            let doc = self.tab_manager.active_document();
+            let text = doc.buffer.text();
+            if let Some(byte_pos) = doc.buffer.byte_offset(doc.cursor.position.line, doc.cursor.position.col) {
+                self.matching_bracket_pos = crate::editor::brackets::find_matching_bracket(&text, byte_pos);
+            } else {
+                self.matching_bracket_pos = None;
+            }
+        }
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             self.render_menu_bar(ui);

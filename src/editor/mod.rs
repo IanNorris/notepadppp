@@ -1,4 +1,5 @@
 pub mod bookmarks;
+pub mod brackets;
 pub mod buffer;
 pub mod cursor;
 pub mod document;
