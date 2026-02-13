@@ -229,6 +229,10 @@ static mut DARK_BG_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
 static mut DARK_DLG_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
 static mut DARK_EDIT_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
 
+// Undocumented uxtheme function pointers for dark mode
+static mut FN_ALLOW_DARK_MODE_FOR_WINDOW: Option<unsafe extern "system" fn(HWND, i32) -> i32> = None;
+static mut FN_FLUSH_MENU_THEMES: Option<unsafe extern "system" fn()> = None;
+
 // Dark mode color constants
 const CLR_DARK_BG: u32 = 0x001E1E1E;       // rgb(30,30,30)
 const CLR_DARK_TAB_BG: u32 = 0x00262625;   // rgb(37,37,38)
@@ -240,15 +244,23 @@ const CLR_TEXT_LIGHT: u32 = 0x00D4D4D4;     // rgb(212,212,212)
 const CLR_TEXT_WHITE: u32 = 0x00FFFFFF;
 const CLR_TEXT_GRAY: u32 = 0x00A0A0A0;      // rgb(160,160,160)
 
-/// Apply dark title bar to a window.
+/// Apply dark title bar to a window (attribute 20 first, fallback to 19).
 unsafe fn apply_dark_title_bar(hwnd: HWND) {
     let use_dark: i32 = 1;
-    DwmSetWindowAttribute(
+    let hr = DwmSetWindowAttribute(
         hwnd,
-        20,
+        20, // DWMWA_USE_IMMERSIVE_DARK_MODE (Windows 10 20H1+)
         &use_dark as *const i32 as *const _,
         std::mem::size_of::<i32>() as u32,
     );
+    if hr != 0 {
+        DwmSetWindowAttribute(
+            hwnd,
+            19, // older Windows 10 builds
+            &use_dark as *const i32 as *const _,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
 }
 
 /// Apply a font to a window control via WM_SETFONT.
@@ -265,6 +277,35 @@ unsafe fn apply_font_to_children(parent: HWND, font: HFONT) {
     }
 }
 
+/// Apply dark mode theming to a dialog and all its child controls.
+unsafe fn apply_dark_to_dialog(dlg: HWND) {
+    apply_dark_title_bar(dlg);
+    if let Some(f) = FN_ALLOW_DARK_MODE_FOR_WINDOW {
+        f(dlg, 1);
+    }
+    // Apply SetWindowTheme to each child control based on its class
+    let mut child = GetWindow(dlg, GW_CHILD);
+    let dark_explorer = wide("DarkMode_Explorer");
+    let dark_cfd = wide("DarkMode_CFD");
+    while !child.is_null() {
+        let mut class_buf = [0u16; 64];
+        let len = GetClassNameW(child, class_buf.as_mut_ptr(), class_buf.len() as i32);
+        if len > 0 {
+            let class_name = String::from_utf16_lossy(&class_buf[..len as usize]);
+            match class_name.as_str() {
+                "Button" => {
+                    SetWindowTheme(child, dark_explorer.as_ptr(), std::ptr::null());
+                }
+                "Edit" => {
+                    SetWindowTheme(child, dark_cfd.as_ptr(), std::ptr::null());
+                }
+                _ => {}
+            }
+        }
+        child = GetWindow(child, GW_HWNDNEXT);
+    }
+}
+
 // ── Entry point ──
 pub fn run() {
     unsafe {
@@ -274,18 +315,18 @@ pub fn run() {
         let uxtheme_name = wide("uxtheme.dll");
         let uxtheme = LoadLibraryW(uxtheme_name.as_ptr());
         if !uxtheme.is_null() {
-            // Ordinal 135 = SetPreferredAppMode (AllowDark = 1)
+            // Ordinal 135 = SetPreferredAppMode (ForceDark = 2)
             let set_app_mode: Option<unsafe extern "system" fn(i32) -> i32> =
                 std::mem::transmute(GetProcAddress(uxtheme, 135 as *const u8));
             if let Some(f) = set_app_mode {
-                f(1); // AllowDark
+                f(2); // ForceDark
             }
+            // Ordinal 133 = AllowDarkModeForWindow
+            FN_ALLOW_DARK_MODE_FOR_WINDOW =
+                std::mem::transmute(GetProcAddress(uxtheme, 133 as *const u8));
             // Ordinal 136 = FlushMenuThemes
-            let flush: Option<unsafe extern "system" fn()> =
+            FN_FLUSH_MENU_THEMES =
                 std::mem::transmute(GetProcAddress(uxtheme, 136 as *const u8));
-            if let Some(f) = flush {
-                f();
-            }
         }
 
         // Create dark mode brushes
@@ -346,6 +387,15 @@ pub fn run() {
 
         // Enable dark title bar (Windows 10 1809+ / DWMWA_USE_IMMERSIVE_DARK_MODE)
         apply_dark_title_bar(hwnd);
+
+        // Enable dark mode for this window's menu bar
+        if let Some(f) = FN_ALLOW_DARK_MODE_FOR_WINDOW {
+            f(hwnd, 1); // TRUE
+        }
+        if let Some(f) = FN_FLUSH_MENU_THEMES {
+            f();
+        }
+        DrawMenuBar(hwnd);
 
         // Init app state
         let state = Box::new(AppState {
@@ -751,6 +801,7 @@ unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
     // Apply dark visual theme to controls (Windows 10+)
     let dark_mode = wide("DarkMode_Explorer");
     SetWindowTheme(s.hwnd_tab, dark_mode.as_ptr(), std::ptr::null());
+    SetWindowTheme(s.hwnd_status, dark_mode.as_ptr(), std::ptr::null());
 
     // Dark background for the main window
     let dark_brush = CreateSolidBrush(CLR_DARK_BG);
@@ -1608,9 +1659,6 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         std::ptr::null(),
     );
 
-    // Dark title bar
-    apply_dark_title_bar(dlg);
-
     // Create child controls
     let label_class = wide("STATIC");
     let label_text = wide(&format!("Enter line number (1-{max_line}):"));
@@ -1653,6 +1701,7 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         std::ptr::null(),
     );
 
+    apply_dark_to_dialog(dlg);
     apply_font_to_children(dlg, font);
     SetFocus(DLG_EDIT);
 
@@ -2077,7 +2126,6 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
     FIND_DLG_HWND = dlg;
 
     // Dark title bar
-    apply_dark_title_bar(dlg);
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
@@ -2175,6 +2223,7 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
         SetWindowTextW(find_edit, w.as_ptr());
     }
 
+    apply_dark_to_dialog(dlg);
     apply_font_to_children(dlg, app().ui_font);
     find_dlg_update_replace_visibility();
     SetFocus(find_edit);
@@ -3259,9 +3308,6 @@ unsafe fn cmd_find_in_files_dialog() {
     );
     FIF_DLG_HWND = dlg;
 
-    // Dark title bar
-    apply_dark_title_bar(dlg);
-
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
@@ -3342,6 +3388,7 @@ unsafe fn cmd_find_in_files_dialog() {
         520 / 2 - 50, y_chk + 58, 100, 28, dlg,
         IDC_FIF_FIND_ALL as isize as HMENU, hinstance, std::ptr::null());
 
+    apply_dark_to_dialog(dlg);
     apply_font_to_children(dlg, app().ui_font);
     SetFocus(GetDlgItem(dlg, IDC_FIF_FIND_EDIT));
 }
@@ -3520,9 +3567,6 @@ unsafe fn cmd_preferences_dialog() {
     );
     PREF_DLG_HWND = dlg;
 
-    // Dark title bar
-    apply_dark_title_bar(dlg);
-
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
@@ -3590,6 +3634,7 @@ unsafe fn cmd_preferences_dialog() {
         340 / 2 + 10, margin + 130, 75, 28, dlg,
         IDC_PREF_CANCEL as isize as HMENU, hinstance, std::ptr::null());
 
+    apply_dark_to_dialog(dlg);
     apply_font_to_children(dlg, s.ui_font);
     EnableWindow(s.hwnd_main, FALSE);
 }
