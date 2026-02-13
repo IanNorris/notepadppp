@@ -6,6 +6,7 @@ use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
+use crate::tools::{json_tools, markdown_viewer};
 
 use super::editor_widget::editor_widget;
 use super::search_dialog::{self, SearchAction, SearchBarState};
@@ -40,6 +41,8 @@ pub struct NotepadApp {
     syntax_highlighter: SyntaxHighlighter,
     /// Cached file extension for the active document (without dot)
     file_extension: String,
+    /// Whether to show the markdown preview panel
+    show_markdown_preview: bool,
 }
 
 impl NotepadApp {
@@ -94,6 +97,7 @@ impl NotepadApp {
             current_match_index: None,
             syntax_highlighter: highlighter,
             file_extension: ext,
+            show_markdown_preview: false,
         }
     }
 
@@ -364,6 +368,7 @@ impl NotepadApp {
             self.render_encoding_menu(ui);
             self.render_line_ending_menu(ui);
             self.render_language_menu(ui);
+            self.render_tools_menu(ui);
             self.render_help_menu(ui);
         });
     }
@@ -636,6 +641,84 @@ impl NotepadApp {
                     }
                 });
         });
+    }
+
+    fn render_tools_menu(&mut self, ui: &mut Ui) {
+        ui.menu_button("Tools", |ui| {
+            ui.menu_button("JSON", |ui| {
+                if ui.button("Format JSON  (Ctrl+Shift+J)").clicked() {
+                    self.action_json_format();
+                    ui.close_menu();
+                }
+                if ui.button("Compact JSON").clicked() {
+                    self.action_json_compact();
+                    ui.close_menu();
+                }
+                if ui.button("Validate JSON").clicked() {
+                    self.action_json_validate();
+                    ui.close_menu();
+                }
+                if ui.button("Sort JSON Keys").clicked() {
+                    self.action_json_sort_keys();
+                    ui.close_menu();
+                }
+            });
+            ui.separator();
+            let preview_label = if self.show_markdown_preview {
+                "✓ Markdown Preview"
+            } else {
+                "  Markdown Preview"
+            };
+            if ui.button(preview_label).clicked() {
+                self.show_markdown_preview = !self.show_markdown_preview;
+                ui.close_menu();
+            }
+        });
+    }
+
+    fn action_json_format(&mut self) {
+        self.sync_buffer_from_cache();
+        let text = self.tab_manager.active_document().buffer.text();
+        match json_tools::format_json(&text) {
+            Ok(formatted) => {
+                self.text_cache = formatted;
+                self.sync_buffer_from_cache();
+            }
+            Err(e) => log::error!("JSON format error: {}", e),
+        }
+    }
+
+    fn action_json_compact(&mut self) {
+        self.sync_buffer_from_cache();
+        let text = self.tab_manager.active_document().buffer.text();
+        match json_tools::compact_json(&text) {
+            Ok(compacted) => {
+                self.text_cache = compacted;
+                self.sync_buffer_from_cache();
+            }
+            Err(e) => log::error!("JSON compact error: {}", e),
+        }
+    }
+
+    fn action_json_validate(&mut self) {
+        self.sync_buffer_from_cache();
+        let text = self.tab_manager.active_document().buffer.text();
+        match json_tools::validate_json(&text) {
+            Ok(()) => log::info!("JSON is valid"),
+            Err(e) => log::error!("JSON validation error: {}", e),
+        }
+    }
+
+    fn action_json_sort_keys(&mut self) {
+        self.sync_buffer_from_cache();
+        let text = self.tab_manager.active_document().buffer.text();
+        match json_tools::sort_json_keys(&text) {
+            Ok(sorted) => {
+                self.text_cache = sorted;
+                self.sync_buffer_from_cache();
+            }
+            Err(e) => log::error!("JSON sort keys error: {}", e),
+        }
     }
 
     fn render_help_menu(&mut self, ui: &mut Ui) {
@@ -931,6 +1014,7 @@ impl NotepadApp {
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && !i.modifiers.shift);
         let shift_f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && i.modifiers.shift);
+        let ctrl_shift_j = ctx.input(|i| i.key_pressed(egui::Key::J) && i.modifiers.ctrl && i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -950,6 +1034,7 @@ impl NotepadApp {
         if escape && self.show_search_bar { self.action_close_search(); }
         if f3 { self.action_find_next(); }
         if shift_f3 { self.action_find_prev(); }
+        if ctrl_shift_j { self.action_json_format(); }
     }
 }
 
@@ -1025,7 +1110,35 @@ impl eframe::App for NotepadApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_editor(ui);
+            let is_md = self
+                .tab_manager
+                .active_document()
+                .path
+                .as_ref()
+                .map(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+
+            if self.show_markdown_preview && is_md {
+                self.sync_cache_from_buffer();
+                let md_text = self.text_cache.clone();
+                ui.columns(2, |columns| {
+                    columns[0].push_id("editor_col", |ui| {
+                        self.render_editor(ui);
+                    });
+                    columns[1].push_id("preview_col", |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            markdown_viewer::render_markdown(ui, &md_text);
+                        });
+                    });
+                });
+            } else {
+                self.render_editor(ui);
+            }
         });
     }
 }
