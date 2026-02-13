@@ -1,0 +1,27 @@
+[package]
+name = "notepadppp"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, native text editor for programmers — reimagining Notepad++ in Rust"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "0.31", features = ["persistence"] }
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["file", "image"] }
+ropey = "1.6"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+log = "0.4"
+env_logger = "0.11"
+arboard = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
