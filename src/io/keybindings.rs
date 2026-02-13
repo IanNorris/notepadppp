@@ -152,6 +152,8 @@ impl KeyBindings {
         bindings.insert("play_last_macro".into(), KeyBinding::new("P", true, true, false));
         // Multi-cursor
         bindings.insert("select_next".into(), KeyBinding::new("D", true, false, false));
+        // Hex toggle
+        bindings.insert("toggle_hex_view".into(), KeyBinding::new("H", true, true, false));
         // Escape
         bindings.insert("escape".into(), KeyBinding::new("Escape", false, false, false));
         Self { bindings }
@@ -230,6 +232,7 @@ impl KeyBindings {
             ("toggle_macro_recording", "Start/Stop Macro Recording"),
             ("play_last_macro", "Play Last Macro"),
             ("select_next", "Select Next Occurrence"),
+            ("toggle_hex_view", "Toggle Hex View"),
             ("escape", "Escape / Close"),
         ]
         .into_iter()

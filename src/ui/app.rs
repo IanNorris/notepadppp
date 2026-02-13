@@ -334,7 +334,7 @@ impl NotepadApp {
             ("Sort JSON Keys".into(), String::new()),
             ("Toggle Markdown Preview".into(), String::new()),
             ("Toggle CSV Viewer".into(), String::new()),
-            ("Toggle Hex Viewer".into(), String::new()),
+            ("Toggle Hex Viewer".into(), kb.display_shortcut("toggle_hex_view")),
             ("Compare Files".into(), String::new()),
             ("Base64 Encode".into(), String::new()),
             ("Base64 Decode".into(), String::new()),
@@ -401,7 +401,7 @@ impl NotepadApp {
             29 => self.action_json_sort_keys(),
             30 => { self.show_markdown_preview = !self.show_markdown_preview; }
             31 => { self.show_csv_viewer = !self.show_csv_viewer; }
-            32 => { self.show_hex_viewer = !self.show_hex_viewer; }
+            32 => { self.action_toggle_hex_view(); }
             33 => self.action_compare_files(),
             34 => self.action_mime_transform(crate::tools::mime_tools::base64_encode),
             35 => self.action_mime_transform_result(|s| crate::tools::mime_tools::base64_decode(s)),
@@ -1154,13 +1154,7 @@ impl NotepadApp {
                 "  Hex Viewer"
             };
             if ui.button(hex_label).clicked() {
-                self.show_hex_viewer = !self.show_hex_viewer;
-                if self.show_hex_viewer {
-                    self.sync_cache_from_buffer();
-                    self.hex_view = Some(HexView::from_text(&self.text_cache));
-                } else {
-                    self.hex_view = None;
-                }
+                self.action_toggle_hex_view();
                 ui.close_menu();
             }
         });
@@ -1287,6 +1281,23 @@ impl NotepadApp {
                 }
                 Err(e) => log::error!("Failed to read file for comparison: {}", e),
             }
+        }
+    }
+
+    fn action_toggle_hex_view(&mut self) {
+        self.show_hex_viewer = !self.show_hex_viewer;
+        if self.show_hex_viewer {
+            // Try to read raw bytes from file path first, fall back to text content
+            let bytes = self.tab_manager.active_document().path.as_ref()
+                .and_then(|p| std::fs::read(p).ok());
+            if let Some(bytes) = bytes {
+                self.hex_view = Some(HexView::from_bytes(bytes));
+            } else {
+                self.sync_cache_from_buffer();
+                self.hex_view = Some(HexView::from_text(&self.text_cache));
+            }
+        } else {
+            self.hex_view = None;
         }
     }
 
@@ -1648,7 +1659,7 @@ impl NotepadApp {
         );
     }
 
-    fn render_status_bar(&self, ui: &mut Ui) {
+    fn render_status_bar(&mut self, ui: &mut Ui) {
         let doc = self.tab_manager.active_document();
         let line = doc.cursor.position.line + 1;
         let col = doc.cursor.position.col + 1;
@@ -1668,6 +1679,7 @@ impl NotepadApp {
         };
 
         let char_count = doc.buffer.len_chars();
+        let language = doc.language.clone();
         let tab_count = self.tab_manager.tab_count();
 
         ui.horizontal(|ui| {
@@ -1687,9 +1699,14 @@ impl NotepadApp {
             ui.separator();
             ui.label(eol_str);
             ui.separator();
-            ui.label(&doc.language);
+            ui.label(&language);
             ui.separator();
             ui.label(format!("{} tab(s)", tab_count));
+            ui.separator();
+            let view_label = if self.show_hex_viewer { "HEX" } else { "TEXT" };
+            if ui.selectable_label(self.show_hex_viewer, view_label).clicked() {
+                self.action_toggle_hex_view();
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(format!("{} chars", char_count));
             });
@@ -2026,6 +2043,7 @@ impl NotepadApp {
         let bracket_jump = pressed("bracket_jump");
         let command_palette = pressed("command_palette");
         let select_next = pressed("select_next");
+        let toggle_hex_view = pressed("toggle_hex_view");
 
         if new_file { self.action_new(); }
         if open_file { self.action_open(); }
@@ -2087,6 +2105,9 @@ impl NotepadApp {
                 }
             }
             self.action_select_next_occurrence(ctx);
+        }
+        if toggle_hex_view {
+            self.action_toggle_hex_view();
         }
 
         // Alt+Shift+Arrow for column selection
