@@ -312,9 +312,14 @@ pub fn run() {
         ShowWindow(hwnd, SW_SHOWMAXIMIZED);
         UpdateWindow(hwnd);
 
-        // Message loop with accelerator support
+        // Message loop with accelerator support and modeless dialog handling
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+            // Let modeless Find/Replace dialog process its messages
+            let find_dlg = FIND_DLG_HWND;
+            if !find_dlg.is_null() && IsDialogMessageW(find_dlg, &msg) != 0 {
+                continue;
+            }
             if !h_accel.is_null()
                 && TranslateAcceleratorW(hwnd, h_accel, &msg) != 0
             {
@@ -766,7 +771,7 @@ unsafe fn on_command(id: u16) {
         IDM_EDIT_PASTE => { sci_send(app().hwnd_scintilla, SCI_PASTE, 0, 0); }
         IDM_EDIT_DELETE => { sci_send(app().hwnd_scintilla, SCI_CLEAR, 0, 0); }
         IDM_EDIT_SELECT_ALL => { sci_send(app().hwnd_scintilla, SCI_SELECTALL, 0, 0); }
-        IDM_EDIT_TOGGLE_COMMENT => { show_todo("Toggle comment not yet implemented."); }
+        IDM_EDIT_TOGGLE_COMMENT => { cmd_toggle_comment(); }
 
         // Line operations
         IDM_LINE_DUPLICATE => { sci_send(app().hwnd_scintilla, SCI_LINEDUP, 0, 0); }
@@ -809,10 +814,12 @@ unsafe fn on_command(id: u16) {
         IDM_EOL_CR => { cmd_set_eol(SC_EOL_CR, "CR"); }
 
         // ── Search ──
-        IDM_SEARCH_FIND | IDM_SEARCH_REPLACE | IDM_SEARCH_FIND_IN_FILES
-        | IDM_SEARCH_SELECT_ALL_OCCURRENCES => {
-            show_todo("Find/Replace is not yet implemented.");
+        IDM_SEARCH_FIND => { cmd_open_find_replace(false); }
+        IDM_SEARCH_REPLACE => { cmd_open_find_replace(true); }
+        IDM_SEARCH_FIND_IN_FILES => {
+            show_todo("Find in Files is not yet implemented.");
         }
+        IDM_SEARCH_SELECT_ALL_OCCURRENCES => { cmd_select_all_occurrences(); }
         IDM_SEARCH_GOTO_LINE => { cmd_goto_line(); }
         IDM_SEARCH_BOOKMARK_TOGGLE => { cmd_bookmark_toggle(); }
         IDM_SEARCH_BOOKMARK_NEXT => { cmd_bookmark_next(); }
@@ -1682,6 +1689,697 @@ unsafe fn cmd_text_transform_result(f: fn(&str) -> Result<String, String>) {
             let msg = wide(&e);
             MessageBoxW(s.hwnd_main, msg.as_ptr(), title.as_ptr(), MB_OK | 0x10);
         }
+    }
+}
+
+// ── Find / Replace dialog (modeless) ──
+
+// Control IDs for Find/Replace dialog
+const IDC_FIND_EDIT: i32 = 2001;
+const IDC_REPLACE_EDIT: i32 = 2002;
+const IDC_FIND_NEXT: i32 = 2003;
+const IDC_COUNT: i32 = 2004;
+const IDC_FIND_ALL: i32 = 2005;
+const IDC_REPLACE_BTN: i32 = 2006;
+const IDC_REPLACE_ALL: i32 = 2007;
+const IDC_MATCH_CASE: i32 = 2010;
+const IDC_WHOLE_WORD: i32 = 2011;
+const IDC_REGEX: i32 = 2012;
+const IDC_WRAP_AROUND: i32 = 2013;
+const IDC_DIR_UP: i32 = 2020;
+const IDC_DIR_DOWN: i32 = 2021;
+const IDC_REPLACE_LABEL: i32 = 2030;
+const IDC_STATUS_LABEL: i32 = 2031;
+
+// Find indicator number (avoid folding markers 25-31 and bookmark 1)
+const FIND_INDICATOR: usize = 8;
+
+static mut FIND_DLG_HWND: HWND = std::ptr::null_mut();
+static mut FIND_DLG_SHOW_REPLACE: bool = false;
+
+unsafe fn cmd_open_find_replace(show_replace: bool) {
+    FIND_DLG_SHOW_REPLACE = show_replace;
+
+    if !FIND_DLG_HWND.is_null() && IsWindow(FIND_DLG_HWND) != 0 {
+        // Dialog already open — update replace visibility and focus
+        find_dlg_update_replace_visibility();
+        let edit = GetDlgItem(FIND_DLG_HWND, IDC_FIND_EDIT);
+        SetFocus(edit);
+        SendMessageW(edit, 0x00B1 /*EM_SETSEL*/, 0, -1isize); // select all
+        SetForegroundWindow(FIND_DLG_HWND);
+        return;
+    }
+
+    // Pre-fill find text from selection
+    let s = app();
+    let sel_start = sci_send(s.hwnd_scintilla, SCI_GETSELECTIONSTART, 0, 0) as usize;
+    let sel_end = sci_send(s.hwnd_scintilla, SCI_GETSELECTIONEND, 0, 0) as usize;
+    let sel_text = if sel_end > sel_start && (sel_end - sel_start) < 1024 {
+        let mut buf = vec![0u8; sel_end - sel_start + 1];
+        sci_send(s.hwnd_scintilla, SCI_GETSELTEXT, 0, buf.as_mut_ptr() as isize);
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..len]).to_string()
+    } else {
+        String::new()
+    };
+
+    let hinstance = GetModuleHandleW(std::ptr::null());
+
+    // Register class (once)
+    let class_name = wide("NPPPFindReplace");
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfnWndProc: Some(find_dlg_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: hinstance,
+        hIcon: std::ptr::null_mut(),
+        hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: class_name.as_ptr(),
+        hIconSm: std::ptr::null_mut(),
+    };
+    RegisterClassExW(&wc);
+
+    let dlg_h = if show_replace { 280 } else { 250 };
+    let title_str = if show_replace { "Replace" } else { "Find" };
+    let title = wide(title_str);
+    let dlg = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        class_name.as_ptr(),
+        title.as_ptr(),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 420, dlg_h,
+        s.hwnd_main,
+        std::ptr::null_mut(),
+        hinstance,
+        std::ptr::null(),
+    );
+    FIND_DLG_HWND = dlg;
+
+    let static_c = wide("STATIC");
+    let edit_c = wide("EDIT");
+    let btn_c = wide("BUTTON");
+
+    // Find label + edit
+    let lbl = wide("Find what:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 10, 80, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+
+    let find_edit = CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080/*ES_AUTOHSCROLL*/,
+        95, 8, 305, 22, dlg,
+        IDC_FIND_EDIT as isize as HMENU, hinstance, std::ptr::null());
+
+    // Replace label + edit
+    let lbl = wide("Replace with:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 38, 80, 20, dlg,
+        IDC_REPLACE_LABEL as isize as HMENU, hinstance, std::ptr::null());
+
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
+        95, 36, 305, 22, dlg,
+        IDC_REPLACE_EDIT as isize as HMENU, hinstance, std::ptr::null());
+
+    // Buttons row
+    let y_btns = 66;
+    let mk_btn = |text: &str, x: i32, id: i32, def: bool| {
+        let w = wide(text);
+        let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | if def { 0x0001 } else { 0 };
+        CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
+            x, y_btns, 90, 26, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+    };
+    mk_btn("Find Next", 10, IDC_FIND_NEXT, true);
+    mk_btn("Count", 105, IDC_COUNT, false);
+    mk_btn("Find All", 200, IDC_FIND_ALL, false);
+
+    // Replace buttons row
+    let y_rep = y_btns + 30;
+    mk_btn("Replace", 10, IDC_REPLACE_BTN, false);
+    mk_btn("Replace All", 105, IDC_REPLACE_ALL, false);
+
+    // Checkboxes
+    let y_chk = y_rep + 36;
+    let mk_chk = |text: &str, x: i32, y: i32, id: i32, checked: bool| {
+        let w = wide(text);
+        let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003/*BS_AUTOCHECKBOX*/;
+        let h = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
+            x, y, 130, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+        if checked {
+            SendMessageW(h, 0x00F1/*BM_SETCHECK*/, 1/*BST_CHECKED*/, 0);
+        }
+    };
+    mk_chk("Match case", 10, y_chk, IDC_MATCH_CASE, false);
+    mk_chk("Whole word", 145, y_chk, IDC_WHOLE_WORD, false);
+    mk_chk("Regular expression", 10, y_chk + 22, IDC_REGEX, false);
+    mk_chk("Wrap around", 145, y_chk + 22, IDC_WRAP_AROUND, true);
+
+    // Direction radio buttons
+    let y_dir = y_chk + 50;
+    let lbl = wide("Direction:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, y_dir, 70, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+
+    let w = wide("Up");
+    CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0009/*BS_AUTORADIOBUTTON | WS_GROUP*/,
+        80, y_dir, 50, 20, dlg, IDC_DIR_UP as isize as HMENU, hinstance, std::ptr::null());
+
+    let w = wide("Down");
+    let h_down = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0009,
+        135, y_dir, 60, 20, dlg, IDC_DIR_DOWN as isize as HMENU, hinstance, std::ptr::null());
+    SendMessageW(h_down, 0x00F1/*BM_SETCHECK*/, 1, 0);
+
+    // Status label
+    let lbl = wide("");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 200, y_dir, 200, 20, dlg,
+        IDC_STATUS_LABEL as isize as HMENU, hinstance, std::ptr::null());
+
+    // Pre-fill find text if there was a selection
+    if !sel_text.is_empty() {
+        let w = wide(&sel_text);
+        SetWindowTextW(find_edit, w.as_ptr());
+    }
+
+    find_dlg_update_replace_visibility();
+    SetFocus(find_edit);
+}
+
+unsafe fn find_dlg_update_replace_visibility() {
+    let show = FIND_DLG_SHOW_REPLACE;
+    let dlg = FIND_DLG_HWND;
+    let show_cmd = if show { SW_SHOW } else { SW_HIDE };
+
+    let ids = [IDC_REPLACE_LABEL, IDC_REPLACE_EDIT, IDC_REPLACE_BTN, IDC_REPLACE_ALL];
+    for &id in &ids {
+        let h = GetDlgItem(dlg, id);
+        if !h.is_null() {
+            ShowWindow(h, show_cmd);
+        }
+    }
+
+    // Resize dialog
+    let h = if show { 280 } else { 250 };
+    let mut rc: RECT = std::mem::zeroed();
+    GetWindowRect(dlg, &mut rc);
+    MoveWindow(dlg, rc.left, rc.top, 420, h, TRUE);
+
+    let title = if show { "Replace" } else { "Find" };
+    let w = wide(title);
+    SetWindowTextW(dlg, w.as_ptr());
+}
+
+/// Get search flags from the Find dialog checkboxes.
+unsafe fn find_dlg_search_flags() -> i32 {
+    let dlg = FIND_DLG_HWND;
+    let mut flags = 0i32;
+    if SendMessageW(GetDlgItem(dlg, IDC_MATCH_CASE), 0x00F0/*BM_GETCHECK*/, 0, 0) != 0 {
+        flags |= SCFIND_MATCHCASE;
+    }
+    if SendMessageW(GetDlgItem(dlg, IDC_WHOLE_WORD), 0x00F0, 0, 0) != 0 {
+        flags |= SCFIND_WHOLEWORD;
+    }
+    if SendMessageW(GetDlgItem(dlg, IDC_REGEX), 0x00F0, 0, 0) != 0 {
+        flags |= SCFIND_REGEXP;
+    }
+    flags
+}
+
+unsafe fn find_dlg_wrap_around() -> bool {
+    SendMessageW(GetDlgItem(FIND_DLG_HWND, IDC_WRAP_AROUND), 0x00F0, 0, 0) != 0
+}
+
+unsafe fn find_dlg_direction_down() -> bool {
+    SendMessageW(GetDlgItem(FIND_DLG_HWND, IDC_DIR_DOWN), 0x00F0, 0, 0) != 0
+}
+
+unsafe fn find_dlg_get_text(id: i32) -> String {
+    let h = GetDlgItem(FIND_DLG_HWND, id);
+    let mut buf = [0u16; 1024];
+    GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32);
+    wchar_to_string(&buf)
+}
+
+unsafe fn find_dlg_set_status(msg: &str) {
+    let h = GetDlgItem(FIND_DLG_HWND, IDC_STATUS_LABEL);
+    if !h.is_null() {
+        let w = wide(msg);
+        SetWindowTextW(h, w.as_ptr());
+    }
+}
+
+/// Find next/previous occurrence from current position.
+unsafe fn cmd_find_next_in_dlg() {
+    let search_text = find_dlg_get_text(IDC_FIND_EDIT);
+    if search_text.is_empty() {
+        return;
+    }
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+    let flags = find_dlg_search_flags();
+    let down = find_dlg_direction_down();
+    let wrap = find_dlg_wrap_around();
+    let doc_len = sci_send(hwnd, SCI_GETLENGTH, 0, 0) as usize;
+    let search_bytes = search_text.as_bytes();
+    let mut needle = search_bytes.to_vec();
+    needle.push(0);
+
+    sci_send(hwnd, SCI_SETSEARCHFLAGS, flags as usize, 0);
+
+    let (start, end) = if down {
+        let sel_end = sci_send(hwnd, SCI_GETSELECTIONEND, 0, 0) as usize;
+        (sel_end, doc_len)
+    } else {
+        let sel_start = sci_send(hwnd, SCI_GETSELECTIONSTART, 0, 0) as usize;
+        (sel_start, 0)
+    };
+
+    sci_send(hwnd, SCI_SETTARGETSTART, start, 0);
+    sci_send(hwnd, SCI_SETTARGETEND, end, 0);
+    let pos = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+
+    if pos >= 0 {
+        let match_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+        sci_send(hwnd, SCI_SETSEL, pos as usize, match_end as isize);
+        sci_send(hwnd, SCI_SCROLLCARET, 0, 0);
+        find_dlg_set_status("");
+    } else if wrap {
+        // Wrap around
+        let (ws, we) = if down { (0, doc_len) } else { (doc_len, 0) };
+        sci_send(hwnd, SCI_SETTARGETSTART, ws, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, we, 0);
+        let pos = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+        if pos >= 0 {
+            let match_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+            sci_send(hwnd, SCI_SETSEL, pos as usize, match_end as isize);
+            sci_send(hwnd, SCI_SCROLLCARET, 0, 0);
+            find_dlg_set_status("Wrapped");
+        } else {
+            find_dlg_set_status("Not found");
+        }
+    } else {
+        find_dlg_set_status("Not found");
+    }
+}
+
+/// Count all matches in the document.
+unsafe fn cmd_count_matches() {
+    let search_text = find_dlg_get_text(IDC_FIND_EDIT);
+    if search_text.is_empty() {
+        return;
+    }
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+    let flags = find_dlg_search_flags();
+    let doc_len = sci_send(hwnd, SCI_GETLENGTH, 0, 0) as usize;
+    let search_bytes = search_text.as_bytes();
+    let mut needle = search_bytes.to_vec();
+    needle.push(0);
+
+    sci_send(hwnd, SCI_SETSEARCHFLAGS, flags as usize, 0);
+    let mut count = 0usize;
+    let mut pos = 0usize;
+
+    loop {
+        sci_send(hwnd, SCI_SETTARGETSTART, pos, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, doc_len, 0);
+        let found = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+        if found < 0 {
+            break;
+        }
+        count += 1;
+        let match_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+        if match_end <= pos {
+            break; // prevent infinite loop
+        }
+        pos = match_end;
+    }
+
+    find_dlg_set_status(&format!("{count} matches"));
+}
+
+/// Find All: highlight all matches with an indicator.
+unsafe fn cmd_find_all() {
+    let search_text = find_dlg_get_text(IDC_FIND_EDIT);
+    if search_text.is_empty() {
+        return;
+    }
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+    let flags = find_dlg_search_flags();
+    let doc_len = sci_send(hwnd, SCI_GETLENGTH, 0, 0) as usize;
+    let search_bytes = search_text.as_bytes();
+    let mut needle = search_bytes.to_vec();
+    needle.push(0);
+
+    // Configure indicator
+    sci_send(hwnd, SCI_INDICSETSTYLE, FIND_INDICATOR, INDIC_ROUNDBOX as isize);
+    sci_send(hwnd, SCI_INDICSETFORE, FIND_INDICATOR, rgb(255, 150, 50) as isize);
+    sci_send(hwnd, SCI_INDICSETALPHA, FIND_INDICATOR, 100);
+    sci_send(hwnd, SCI_SETINDICATORCURRENT, FIND_INDICATOR, 0);
+
+    // Clear previous highlights
+    sci_send(hwnd, SCI_INDICATORCLEARRANGE, 0, doc_len as isize);
+
+    sci_send(hwnd, SCI_SETSEARCHFLAGS, flags as usize, 0);
+    let mut count = 0usize;
+    let mut pos = 0usize;
+
+    loop {
+        sci_send(hwnd, SCI_SETTARGETSTART, pos, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, doc_len, 0);
+        let found = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+        if found < 0 {
+            break;
+        }
+        let match_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+        let match_len = match_end - found as usize;
+        sci_send(hwnd, SCI_INDICATORFILLRANGE, found as usize, match_len as isize);
+        count += 1;
+        if match_end <= pos {
+            break;
+        }
+        pos = match_end;
+    }
+
+    find_dlg_set_status(&format!("{count} matches highlighted"));
+}
+
+/// Replace the current selection (if it matches the find text) and find next.
+unsafe fn cmd_replace_single() {
+    let search_text = find_dlg_get_text(IDC_FIND_EDIT);
+    let replace_text = find_dlg_get_text(IDC_REPLACE_EDIT);
+    if search_text.is_empty() {
+        return;
+    }
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+    let flags = find_dlg_search_flags();
+    let search_bytes = search_text.as_bytes();
+    let mut needle = search_bytes.to_vec();
+    needle.push(0);
+
+    // Check if current selection matches the find text
+    let sel_start = sci_send(hwnd, SCI_GETSELECTIONSTART, 0, 0) as usize;
+    let sel_end = sci_send(hwnd, SCI_GETSELECTIONEND, 0, 0) as usize;
+
+    if sel_end > sel_start {
+        sci_send(hwnd, SCI_SETSEARCHFLAGS, flags as usize, 0);
+        sci_send(hwnd, SCI_SETTARGETSTART, sel_start, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, sel_end, 0);
+        let found = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+        if found >= 0 && found as usize == sel_start {
+            let target_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+            if target_end == sel_end {
+                // Current selection matches — replace it
+                let mut rep = replace_text.as_bytes().to_vec();
+                rep.push(0);
+                sci_send(hwnd, SCI_REPLACETARGET, replace_text.len(), rep.as_ptr() as isize);
+            }
+        }
+    }
+
+    // Find next
+    cmd_find_next_in_dlg();
+}
+
+/// Replace all occurrences.
+unsafe fn cmd_replace_all() {
+    let search_text = find_dlg_get_text(IDC_FIND_EDIT);
+    let replace_text = find_dlg_get_text(IDC_REPLACE_EDIT);
+    if search_text.is_empty() {
+        return;
+    }
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+    let flags = find_dlg_search_flags();
+    let search_bytes = search_text.as_bytes();
+    let mut needle = search_bytes.to_vec();
+    needle.push(0);
+    let mut rep = replace_text.as_bytes().to_vec();
+    rep.push(0);
+
+    sci_send(hwnd, SCI_SETSEARCHFLAGS, flags as usize, 0);
+    sci_send(hwnd, SCI_BEGINUNDOACTION, 0, 0);
+
+    let mut count = 0usize;
+    let mut pos = 0usize;
+
+    loop {
+        let current_len = sci_send(hwnd, SCI_GETLENGTH, 0, 0) as usize;
+        sci_send(hwnd, SCI_SETTARGETSTART, pos, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, current_len, 0);
+        let found = sci_send(hwnd, SCI_SEARCHINTARGET, search_bytes.len(), needle.as_ptr() as isize);
+        if found < 0 {
+            break;
+        }
+        sci_send(hwnd, SCI_REPLACETARGET, replace_text.len(), rep.as_ptr() as isize);
+        let new_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+        count += 1;
+        if new_end <= pos {
+            break;
+        }
+        pos = new_end;
+    }
+
+    sci_send(hwnd, SCI_ENDUNDOACTION, 0, 0);
+    find_dlg_set_status(&format!("{count} replaced"));
+}
+
+unsafe extern "system" fn find_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_COMMAND => {
+            let cmd = (wparam & 0xFFFF) as i32;
+            match cmd {
+                IDC_FIND_NEXT => { cmd_find_next_in_dlg(); }
+                IDC_COUNT => { cmd_count_matches(); }
+                IDC_FIND_ALL => { cmd_find_all(); }
+                IDC_REPLACE_BTN => { cmd_replace_single(); }
+                IDC_REPLACE_ALL => { cmd_replace_all(); }
+                _ => {}
+            }
+            0
+        }
+        WM_CLOSE => {
+            // Clear find indicators when closing
+            let s = app();
+            let hwnd_sci = s.hwnd_scintilla;
+            let doc_len = sci_send(hwnd_sci, SCI_GETLENGTH, 0, 0) as usize;
+            sci_send(hwnd_sci, SCI_SETINDICATORCURRENT, FIND_INDICATOR, 0);
+            sci_send(hwnd_sci, SCI_INDICATORCLEARRANGE, 0, doc_len as isize);
+
+            DestroyWindow(hwnd);
+            FIND_DLG_HWND = std::ptr::null_mut();
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// ── Toggle Comment ──
+
+/// Get comment prefix/suffix for a language name.
+fn comment_style_for_language(lang: &str) -> (&'static str, &'static str) {
+    match lang {
+        "C" | "C++" | "C#" | "Java" | "JavaScript" | "TypeScript" | "Rust" | "Go"
+        | "Swift" | "Kotlin" | "Scala" | "D" | "Objective-C" => ("//", ""),
+        "Python" | "Ruby" | "Perl" | "Bash" | "PowerShell" | "R" | "Nim"
+        | "YAML" | "TOML" | "INI/Properties" | "CMake" | "Makefile" => ("#", ""),
+        "SQL" | "Lua" | "Haskell" => ("--", ""),
+        "HTML" | "XML" => ("<!-- ", " -->"),
+        "CSS" => ("/* ", " */"),
+        "VB" => ("'", ""),
+        "Batch" => ("REM ", ""),
+        "LaTeX" => ("%", ""),
+        "Julia" => ("#", ""),
+        _ => ("//", ""),
+    }
+}
+
+unsafe fn cmd_toggle_comment() {
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+
+    let lang = if !s.tabs.is_empty() {
+        s.tabs[s.active_tab].language.clone()
+    } else {
+        "Plain Text".to_string()
+    };
+    let (prefix, suffix) = comment_style_for_language(&lang);
+
+    let sel_start = sci_send(hwnd, SCI_GETSELECTIONSTART, 0, 0) as usize;
+    let sel_end = sci_send(hwnd, SCI_GETSELECTIONEND, 0, 0) as usize;
+
+    let line_start = sci_send(hwnd, SCI_LINEFROMPOSITION, sel_start, 0) as usize;
+    let line_end_pos = if sel_end > sel_start {
+        sci_send(hwnd, SCI_LINEFROMPOSITION, sel_end, 0) as usize
+    } else {
+        line_start
+    };
+
+    // Collect lines
+    let mut all_commented = true;
+    let mut line_contents: Vec<String> = Vec::new();
+
+    for line in line_start..=line_end_pos {
+        let line_len = sci_send(hwnd, SCI_LINELENGTH, line, 0) as usize;
+        if line_len == 0 {
+            line_contents.push(String::new());
+            continue;
+        }
+        let mut buf = vec![0u8; line_len + 1];
+        sci_send(hwnd, SCI_GETLINE, line, buf.as_mut_ptr() as isize);
+        buf.truncate(line_len);
+        let text = String::from_utf8_lossy(&buf).to_string();
+        let trimmed = text.trim_start();
+        if !trimmed.is_empty() && !trimmed.starts_with(prefix) {
+            all_commented = false;
+        }
+        line_contents.push(text);
+    }
+
+    sci_send(hwnd, SCI_BEGINUNDOACTION, 0, 0);
+
+    // Apply toggle
+    for (i, line) in line_contents.iter().enumerate() {
+        let line_num = line_start + i;
+        let pos_start = sci_send(hwnd, SCI_POSITIONFROMLINE, line_num, 0) as usize;
+
+        if all_commented {
+            // Remove comment
+            let trimmed_start = line.len() - line.trim_start().len();
+            if line.trim_start().starts_with(prefix) {
+                // Remove prefix
+                let prefix_pos = pos_start + trimmed_start;
+                sci_send(hwnd, SCI_SETTARGETSTART, prefix_pos, 0);
+                sci_send(hwnd, SCI_SETTARGETEND, prefix_pos + prefix.len(), 0);
+                let empty = b"\0";
+                sci_send(hwnd, SCI_REPLACETARGET, 0, empty.as_ptr() as isize);
+
+                // Remove suffix if present
+                if !suffix.is_empty() {
+                    // Re-read line after prefix removal
+                    let new_len = sci_send(hwnd, SCI_LINELENGTH, line_num, 0) as usize;
+                    let mut buf2 = vec![0u8; new_len + 1];
+                    sci_send(hwnd, SCI_GETLINE, line_num, buf2.as_mut_ptr() as isize);
+                    buf2.truncate(new_len);
+                    let text2 = String::from_utf8_lossy(&buf2).to_string();
+                    let trimmed_end = text2.trim_end_matches(|c: char| c == '\r' || c == '\n');
+                    if trimmed_end.ends_with(suffix) {
+                        let suffix_start = pos_start + trimmed_end.len() - suffix.len();
+                        // Account for prefix already removed
+                        let adj_start = suffix_start;
+                        sci_send(hwnd, SCI_SETTARGETSTART, adj_start, 0);
+                        sci_send(hwnd, SCI_SETTARGETEND, adj_start + suffix.len(), 0);
+                        sci_send(hwnd, SCI_REPLACETARGET, 0, empty.as_ptr() as isize);
+                    }
+                }
+            }
+        } else {
+            // Add comment
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() && line_contents.len() > 1 {
+                continue; // skip empty lines in multi-line selection
+            }
+            let trimmed_start = line.len() - trimmed.len();
+            let insert_pos = pos_start + trimmed_start;
+
+            // Insert prefix
+            let mut pfx = prefix.as_bytes().to_vec();
+            pfx.push(0);
+            sci_send(hwnd, SCI_INSERTTEXT, insert_pos, pfx.as_ptr() as isize);
+
+            // Insert suffix at end of line if needed
+            if !suffix.is_empty() {
+                let new_len = sci_send(hwnd, SCI_LINELENGTH, line_num, 0) as usize;
+                let new_pos_start = sci_send(hwnd, SCI_POSITIONFROMLINE, line_num, 0) as usize;
+                let mut buf2 = vec![0u8; new_len + 1];
+                sci_send(hwnd, SCI_GETLINE, line_num, buf2.as_mut_ptr() as isize);
+                buf2.truncate(new_len);
+                let text2 = String::from_utf8_lossy(&buf2).to_string();
+                let trimmed_end = text2.trim_end_matches(|c: char| c == '\r' || c == '\n');
+                let suffix_pos = new_pos_start + trimmed_end.len();
+                let mut sfx = suffix.as_bytes().to_vec();
+                sfx.push(0);
+                sci_send(hwnd, SCI_INSERTTEXT, suffix_pos, sfx.as_ptr() as isize);
+            }
+        }
+    }
+
+    sci_send(hwnd, SCI_ENDUNDOACTION, 0, 0);
+}
+
+// ── Select All Occurrences ──
+
+unsafe fn cmd_select_all_occurrences() {
+    let s = app();
+    let hwnd = s.hwnd_scintilla;
+
+    // Get current selection as search term
+    let sel_start = sci_send(hwnd, SCI_GETSELECTIONSTART, 0, 0) as usize;
+    let sel_end = sci_send(hwnd, SCI_GETSELECTIONEND, 0, 0) as usize;
+    if sel_end <= sel_start {
+        return; // nothing selected
+    }
+    let sel_len = sel_end - sel_start;
+    let mut buf = vec![0u8; sel_len + 1];
+    sci_send(hwnd, SCI_GETSELTEXT, 0, buf.as_mut_ptr() as isize);
+    let search_len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    if search_len == 0 {
+        return;
+    }
+    let mut needle = buf[..search_len].to_vec();
+    needle.push(0);
+
+    // Enable multiple selection
+    sci_send(hwnd, SCI_SETMULTIPLESELECTION, 1, 0);
+    sci_send(hwnd, SCI_SETADDITIONALSELECTIONTYPING, 1, 0);
+
+    // Search entire document for all occurrences
+    let doc_len = sci_send(hwnd, SCI_GETLENGTH, 0, 0) as usize;
+    sci_send(hwnd, SCI_SETSEARCHFLAGS, SCFIND_MATCHCASE as usize, 0);
+
+    let mut first = true;
+    let mut pos = 0usize;
+    let mut main_idx = 0usize;
+    let mut idx = 0usize;
+
+    loop {
+        sci_send(hwnd, SCI_SETTARGETSTART, pos, 0);
+        sci_send(hwnd, SCI_SETTARGETEND, doc_len, 0);
+        let found = sci_send(hwnd, SCI_SEARCHINTARGET, search_len, needle.as_ptr() as isize);
+        if found < 0 {
+            break;
+        }
+        let match_end = sci_send(hwnd, SCI_GETTARGETEND, 0, 0) as usize;
+
+        if first {
+            sci_send(hwnd, SCI_SETSEL, found as usize, match_end as isize);
+            first = false;
+        } else {
+            sci_send(hwnd, SCI_ADDSELECTION, found as usize, match_end as isize);
+        }
+
+        if found as usize == sel_start {
+            main_idx = idx;
+        }
+        idx += 1;
+
+        if match_end <= pos {
+            break;
+        }
+        pos = match_end;
+    }
+
+    if idx > 0 {
+        sci_send(hwnd, SCI_SETMAINSELECTION, main_idx, 0);
     }
 }
 
