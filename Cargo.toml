@@ -23,6 +23,7 @@ glob-match = "0.2"
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 pulldown-cmark = "0.12"
 open = "5"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

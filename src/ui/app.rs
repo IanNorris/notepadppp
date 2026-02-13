@@ -1,13 +1,15 @@
-use egui::{self, Align, Layout, RichText, Ui};
+use egui::{self, Align, Color32, Layout, RichText, Ui};
 use std::path::PathBuf;
 
 use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
+use crate::io::session;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
-use crate::tools::{csv_viewer, json_tools, markdown_viewer};
+use crate::tools::{csv_viewer, diff_tool, json_tools, markdown_viewer, mime_tools};
 use crate::tools::csv_viewer::CsvData;
+use crate::tools::diff_tool::DiffResult;
 
 use super::editor_widget::editor_widget;
 use super::search_dialog::{self, SearchAction, SearchBarState};
@@ -53,6 +55,10 @@ pub struct NotepadApp {
     csv_data: Option<CsvData>,
     /// Current CSV delimiter
     csv_delimiter: char,
+    /// Diff comparison result
+    diff_result: Option<DiffResult>,
+    /// Whether to auto-restore session on startup
+    auto_restore_session: bool,
 }
 
 impl NotepadApp {
@@ -112,6 +118,8 @@ impl NotepadApp {
             show_csv_viewer: false,
             csv_data: None,
             csv_delimiter: ',',
+            diff_result: None,
+            auto_restore_session: false,
         }
     }
 
@@ -444,6 +452,27 @@ impl NotepadApp {
             });
 
             ui.separator();
+
+            // Session Management
+            if ui.button("Save Session...").clicked() {
+                self.action_save_session();
+                ui.close_menu();
+            }
+            if ui.button("Load Session...").clicked() {
+                self.action_load_session();
+                ui.close_menu();
+            }
+            let auto_label = if self.auto_restore_session {
+                "✓ Auto-restore Session"
+            } else {
+                "  Auto-restore Session"
+            };
+            if ui.button(auto_label).clicked() {
+                self.auto_restore_session = !self.auto_restore_session;
+                ui.close_menu();
+            }
+
+            ui.separator();
             if ui.button("Exit").clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -732,6 +761,51 @@ impl NotepadApp {
                 }
                 ui.close_menu();
             }
+
+            ui.separator();
+            ui.menu_button("MIME Tools", |ui| {
+                if ui.button("Base64 Encode").clicked() {
+                    self.action_mime_transform(mime_tools::base64_encode);
+                    ui.close_menu();
+                }
+                if ui.button("Base64 Decode").clicked() {
+                    self.action_mime_transform_result(|s| mime_tools::base64_decode(s));
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("URL Encode").clicked() {
+                    self.action_mime_transform(mime_tools::url_encode);
+                    ui.close_menu();
+                }
+                if ui.button("URL Decode").clicked() {
+                    self.action_mime_transform_result(|s| mime_tools::url_decode(s));
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("HTML Entity Encode").clicked() {
+                    self.action_mime_transform(mime_tools::html_entity_encode);
+                    ui.close_menu();
+                }
+                if ui.button("HTML Entity Decode").clicked() {
+                    self.action_mime_transform(mime_tools::html_entity_decode);
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Hex Encode").clicked() {
+                    self.action_mime_transform(mime_tools::hex_encode);
+                    ui.close_menu();
+                }
+                if ui.button("Hex Decode").clicked() {
+                    self.action_mime_transform_result(|s| mime_tools::hex_decode(s));
+                    ui.close_menu();
+                }
+            });
+
+            ui.separator();
+            if ui.button("Compare Files...").clicked() {
+                self.action_compare_files();
+                ui.close_menu();
+            }
         });
     }
 
@@ -777,6 +851,133 @@ impl NotepadApp {
                 self.sync_buffer_from_cache();
             }
             Err(e) => log::error!("JSON sort keys error: {}", e),
+        }
+    }
+
+    fn action_mime_transform(&mut self, transform: fn(&str) -> String) {
+        self.sync_cache_from_buffer();
+        let result = transform(&self.text_cache);
+        self.text_cache = result;
+        self.sync_buffer_from_cache();
+        self.invalidate_cache();
+    }
+
+    fn action_mime_transform_result(&mut self, transform: fn(&str) -> Result<String, String>) {
+        self.sync_cache_from_buffer();
+        match transform(&self.text_cache) {
+            Ok(result) => {
+                self.text_cache = result;
+                self.sync_buffer_from_cache();
+                self.invalidate_cache();
+            }
+            Err(e) => log::error!("MIME decode error: {}", e),
+        }
+    }
+
+    fn action_compare_files(&mut self) {
+        self.sync_cache_from_buffer();
+        let current_text = self.text_cache.clone();
+
+        if let Some(path) = rfd::FileDialog::new().pick_file() {
+            match std::fs::read_to_string(&path) {
+                Ok(other_text) => {
+                    self.diff_result = Some(diff_tool::diff_texts(&current_text, &other_text));
+                }
+                Err(e) => log::error!("Failed to read file for comparison: {}", e),
+            }
+        }
+    }
+
+    fn action_save_session(&mut self) {
+        let sess = session::capture_session(&self.tab_manager, "session");
+        if let Some(config_dir) = dirs::config_dir() {
+            let dir = config_dir.join("notepadppp").join("sessions");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("session.json");
+            if let Err(e) = session::save_session(&sess, &path) {
+                log::error!("Failed to save session: {}", e);
+            } else {
+                log::info!("Session saved to {:?}", path);
+            }
+        }
+    }
+
+    fn action_load_session(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Session", &["json"])
+            .pick_file()
+        {
+            match session::load_session(&path) {
+                Ok(sess) => {
+                    if let Err(e) = session::restore_session(&sess, &mut self.tab_manager) {
+                        log::error!("Failed to restore session: {}", e);
+                    } else {
+                        self.invalidate_cache();
+                        log::info!("Session loaded from {:?}", path);
+                    }
+                }
+                Err(e) => log::error!("Failed to load session: {}", e),
+            }
+        }
+    }
+
+    fn render_diff_panel(&mut self, ui: &mut Ui) {
+        let mut close_diff = false;
+
+        if let Some(ref result) = self.diff_result {
+            ui.separator();
+            let stats_text = format!(
+                "Diff: {} same, {} added, {} removed, {} changed",
+                result.stats.same,
+                result.stats.added,
+                result.stats.removed,
+                result.stats.changed
+            );
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(stats_text).strong());
+                if ui.button("✕ Close").clicked() {
+                    close_diff = true;
+                }
+            });
+
+            egui::ScrollArea::vertical()
+                .id_salt("diff_panel")
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for line in &result.lines {
+                        match line {
+                            diff_tool::DiffLine::Same(text) => {
+                                ui.label(format!("  {text}"));
+                            }
+                            diff_tool::DiffLine::Added(text) => {
+                                ui.label(
+                                    RichText::new(format!("+ {text}"))
+                                        .color(Color32::from_rgb(80, 200, 80)),
+                                );
+                            }
+                            diff_tool::DiffLine::Removed(text) => {
+                                ui.label(
+                                    RichText::new(format!("- {text}"))
+                                        .color(Color32::from_rgb(220, 80, 80)),
+                                );
+                            }
+                            diff_tool::DiffLine::Changed { old, new } => {
+                                ui.label(
+                                    RichText::new(format!("- {old}"))
+                                        .color(Color32::from_rgb(220, 180, 60)),
+                                );
+                                ui.label(
+                                    RichText::new(format!("+ {new}"))
+                                        .color(Color32::from_rgb(220, 180, 60)),
+                                );
+                            }
+                        }
+                    }
+                });
+        }
+
+        if close_diff {
+            self.diff_result = None;
         }
     }
 
@@ -1351,6 +1552,9 @@ impl eframe::App for NotepadApp {
             } else {
                 self.render_editor(ui);
             }
+
+            // Diff panel at the bottom
+            self.render_diff_panel(ui);
         });
     }
 }
