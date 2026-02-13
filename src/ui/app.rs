@@ -7,6 +7,7 @@ use crate::editor::macros::MacroRecorder;
 use crate::editor::multi_cursor::MultiCursorState;
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
+use crate::io::keybindings::KeyBindings;
 use crate::io::recent_files::RecentFiles;
 use crate::io::session;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
@@ -113,6 +114,10 @@ pub struct NotepadApp {
     find_in_files_results: Vec<(String, usize, String)>, // (file_path, line_num, line_text)
     /// Column (rectangular) selection state
     column_selection: ColumnSelection,
+    /// Configurable keyboard shortcuts
+    keybindings: KeyBindings,
+    /// Whether to show the keyboard shortcuts dialog
+    show_keybindings_dialog: bool,
 }
 
 impl NotepadApp {
@@ -204,6 +209,9 @@ impl NotepadApp {
             find_in_files_pattern: String::from("*"),
             find_in_files_results: Vec::new(),
             column_selection: ColumnSelection::new(),
+            keybindings: KeyBindings::load(&KeyBindings::keybindings_path())
+                .unwrap_or_default(),
+            show_keybindings_dialog: false,
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -282,63 +290,64 @@ impl NotepadApp {
         self.goto_line_input = String::new();
     }
 
-    fn get_commands(&self) -> Vec<(&'static str, &'static str)> {
+    fn get_commands(&self) -> Vec<(String, String)> {
+        let kb = &self.keybindings;
         vec![
-            ("New File", "Ctrl+N"),
-            ("Open File", "Ctrl+O"),
-            ("Save", "Ctrl+S"),
-            ("Save As", "Ctrl+Shift+S"),
-            ("Save All", ""),
-            ("Close Tab", "Ctrl+W"),
-            ("Close All Tabs", ""),
-            ("Undo", "Ctrl+Z"),
-            ("Redo", "Ctrl+Y"),
-            ("Find", "Ctrl+F"),
-            ("Replace", "Ctrl+H"),
-            ("Find in Files", ""),
-            ("Go to Line", "Ctrl+G"),
-            ("Toggle Word Wrap", ""),
-            ("Toggle Line Numbers", ""),
-            ("Toggle Whitespace", ""),
-            ("Zoom In", "Ctrl+="),
-            ("Zoom Out", "Ctrl+-"),
-            ("Reset Zoom", "Ctrl+0"),
-            ("Split Horizontal", ""),
-            ("Split Vertical", ""),
-            ("Remove Split", ""),
-            ("Toggle Bookmark", "Ctrl+F2"),
-            ("Next Bookmark", "F2"),
-            ("Previous Bookmark", "Shift+F2"),
-            ("Clear Bookmarks", ""),
-            ("Format JSON", "Ctrl+Shift+J"),
-            ("Compact JSON", ""),
-            ("Validate JSON", ""),
-            ("Sort JSON Keys", ""),
-            ("Toggle Markdown Preview", ""),
-            ("Toggle CSV Viewer", ""),
-            ("Toggle Hex Viewer", ""),
-            ("Compare Files", ""),
-            ("Base64 Encode", ""),
-            ("Base64 Decode", ""),
-            ("URL Encode", ""),
-            ("URL Decode", ""),
-            ("Start/Stop Macro Recording", "Ctrl+Shift+R"),
-            ("Play Last Macro", "Ctrl+Shift+P"),
-            ("Export as HTML", ""),
-            ("Export as RTF", ""),
-            ("Preferences", ""),
-            ("Duplicate Line", ""),
-            ("Delete Line", ""),
-            ("Move Line Up", ""),
-            ("Move Line Down", ""),
-            ("Sort Lines Ascending", ""),
-            ("Sort Lines Descending", ""),
-            ("Remove Empty Lines", ""),
-            ("Remove Duplicate Lines", ""),
-            ("Trim Trailing Whitespace", ""),
-            ("Jump to Matching Bracket", "Ctrl+]"),
-            ("Toggle Minimap", ""),
-            ("Toggle Function List", ""),
+            ("New File".into(), kb.display_shortcut("new_file")),
+            ("Open File".into(), kb.display_shortcut("open_file")),
+            ("Save".into(), kb.display_shortcut("save")),
+            ("Save As".into(), kb.display_shortcut("save_as")),
+            ("Save All".into(), String::new()),
+            ("Close Tab".into(), kb.display_shortcut("close_tab")),
+            ("Close All Tabs".into(), String::new()),
+            ("Undo".into(), kb.display_shortcut("undo")),
+            ("Redo".into(), kb.display_shortcut("redo")),
+            ("Find".into(), kb.display_shortcut("find")),
+            ("Replace".into(), kb.display_shortcut("replace")),
+            ("Find in Files".into(), String::new()),
+            ("Go to Line".into(), kb.display_shortcut("goto_line")),
+            ("Toggle Word Wrap".into(), String::new()),
+            ("Toggle Line Numbers".into(), String::new()),
+            ("Toggle Whitespace".into(), String::new()),
+            ("Zoom In".into(), kb.display_shortcut("zoom_in")),
+            ("Zoom Out".into(), kb.display_shortcut("zoom_out")),
+            ("Reset Zoom".into(), kb.display_shortcut("zoom_reset")),
+            ("Split Horizontal".into(), String::new()),
+            ("Split Vertical".into(), String::new()),
+            ("Remove Split".into(), String::new()),
+            ("Toggle Bookmark".into(), kb.display_shortcut("toggle_bookmark")),
+            ("Next Bookmark".into(), kb.display_shortcut("next_bookmark")),
+            ("Previous Bookmark".into(), kb.display_shortcut("prev_bookmark")),
+            ("Clear Bookmarks".into(), String::new()),
+            ("Format JSON".into(), kb.display_shortcut("format_json")),
+            ("Compact JSON".into(), String::new()),
+            ("Validate JSON".into(), String::new()),
+            ("Sort JSON Keys".into(), String::new()),
+            ("Toggle Markdown Preview".into(), String::new()),
+            ("Toggle CSV Viewer".into(), String::new()),
+            ("Toggle Hex Viewer".into(), String::new()),
+            ("Compare Files".into(), String::new()),
+            ("Base64 Encode".into(), String::new()),
+            ("Base64 Decode".into(), String::new()),
+            ("URL Encode".into(), String::new()),
+            ("URL Decode".into(), String::new()),
+            ("Start/Stop Macro Recording".into(), kb.display_shortcut("toggle_macro_recording")),
+            ("Play Last Macro".into(), kb.display_shortcut("play_last_macro")),
+            ("Export as HTML".into(), String::new()),
+            ("Export as RTF".into(), String::new()),
+            ("Preferences".into(), String::new()),
+            ("Duplicate Line".into(), String::new()),
+            ("Delete Line".into(), String::new()),
+            ("Move Line Up".into(), String::new()),
+            ("Move Line Down".into(), String::new()),
+            ("Sort Lines Ascending".into(), String::new()),
+            ("Sort Lines Descending".into(), String::new()),
+            ("Remove Empty Lines".into(), String::new()),
+            ("Remove Duplicate Lines".into(), String::new()),
+            ("Trim Trailing Whitespace".into(), String::new()),
+            ("Jump to Matching Bracket".into(), kb.display_shortcut("bracket_jump")),
+            ("Toggle Minimap".into(), String::new()),
+            ("Toggle Function List".into(), String::new()),
         ]
     }
 
@@ -419,7 +428,7 @@ impl NotepadApp {
     }
 
     fn request_repaint_if_dialog(&self, ctx: &egui::Context) {
-        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette || self.show_find_in_files {
+        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette || self.show_find_in_files || self.show_keybindings_dialog {
             ctx.request_repaint();
         }
     }
@@ -650,19 +659,19 @@ impl NotepadApp {
 
     fn render_file_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("File", |ui| {
-            if ui.button("New                  Ctrl+N").clicked() {
+            if ui.button(format!("New            {}", self.keybindings.display_shortcut("new_file"))).clicked() {
                 self.action_new();
                 ui.close_menu();
             }
-            if ui.button("Open...              Ctrl+O").clicked() {
+            if ui.button(format!("Open...        {}", self.keybindings.display_shortcut("open_file"))).clicked() {
                 self.action_open();
                 ui.close_menu();
             }
-            if ui.button("Save                 Ctrl+S").clicked() {
+            if ui.button(format!("Save           {}", self.keybindings.display_shortcut("save"))).clicked() {
                 self.action_save();
                 ui.close_menu();
             }
-            if ui.button("Save As...     Ctrl+Shift+S").clicked() {
+            if ui.button(format!("Save As...     {}", self.keybindings.display_shortcut("save_as"))).clicked() {
                 self.action_save_as();
                 ui.close_menu();
             }
@@ -671,7 +680,7 @@ impl NotepadApp {
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Close              Ctrl+W").clicked() {
+            if ui.button(format!("Close          {}", self.keybindings.display_shortcut("close_tab"))).clicked() {
                 let idx = self.tab_manager.active_index();
                 self.action_close_tab(idx);
                 ui.close_menu();
@@ -748,11 +757,11 @@ impl NotepadApp {
 
     fn render_edit_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Edit", |ui| {
-            if ui.button("Undo          Ctrl+Z").clicked() {
+            if ui.button(format!("Undo           {}", self.keybindings.display_shortcut("undo"))).clicked() {
                 self.action_undo();
                 ui.close_menu();
             }
-            if ui.button("Redo          Ctrl+Y").clicked() {
+            if ui.button(format!("Redo           {}", self.keybindings.display_shortcut("redo"))).clicked() {
                 self.action_redo();
                 ui.close_menu();
             }
@@ -813,11 +822,11 @@ impl NotepadApp {
 
     fn render_search_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Search", |ui| {
-            if ui.button("Find...          Ctrl+F").clicked() {
+            if ui.button(format!("Find...        {}", self.keybindings.display_shortcut("find"))).clicked() {
                 self.action_show_find();
                 ui.close_menu();
             }
-            if ui.button("Replace...       Ctrl+H").clicked() {
+            if ui.button(format!("Replace...     {}", self.keybindings.display_shortcut("replace"))).clicked() {
                 self.action_show_replace();
                 ui.close_menu();
             }
@@ -826,21 +835,21 @@ impl NotepadApp {
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Go to Line...    Ctrl+G").clicked() {
+            if ui.button(format!("Go to Line...  {}", self.keybindings.display_shortcut("goto_line"))).clicked() {
                 self.action_goto_line();
                 ui.close_menu();
             }
             ui.separator();
             ui.menu_button("Bookmarks", |ui| {
-                if ui.button("Toggle Bookmark       Ctrl+F2").clicked() {
+                if ui.button(format!("Toggle Bookmark    {}", self.keybindings.display_shortcut("toggle_bookmark"))).clicked() {
                     self.action_toggle_bookmark();
                     ui.close_menu();
                 }
-                if ui.button("Next Bookmark              F2").clicked() {
+                if ui.button(format!("Next Bookmark      {}", self.keybindings.display_shortcut("next_bookmark"))).clicked() {
                     self.action_next_bookmark();
                     ui.close_menu();
                 }
-                if ui.button("Previous Bookmark    Shift+F2").clicked() {
+                if ui.button(format!("Previous Bookmark  {}", self.keybindings.display_shortcut("prev_bookmark"))).clicked() {
                     self.action_prev_bookmark();
                     ui.close_menu();
                 }
@@ -1373,6 +1382,10 @@ impl NotepadApp {
         ui.menu_button("Settings", |ui| {
             if ui.button("Preferences...").clicked() {
                 self.show_preferences = !self.show_preferences;
+                ui.close_menu();
+            }
+            if ui.button("Keyboard Shortcuts...").clicked() {
+                self.show_keybindings_dialog = !self.show_keybindings_dialog;
                 ui.close_menu();
             }
         });
@@ -1938,73 +1951,87 @@ impl NotepadApp {
     // --- Keyboard shortcuts ---
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
-        let modifiers = ctx.input(|i| i.modifiers);
-
-        ctx.input(|i| {
-            // Ctrl+N
-            if i.key_pressed(egui::Key::N) && modifiers.ctrl && !modifiers.shift {
-                // Handled after input closure
+        // Helper: check if a configurable action's shortcut was pressed
+        let kb = self.keybindings.clone();
+        let pressed = |action: &str| -> bool {
+            if let Some(binding) = kb.bindings.get(action) {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    ctx.input(|i| {
+                        i.key_pressed(egui_key)
+                            && i.modifiers.ctrl == binding.ctrl
+                            && i.modifiers.shift == binding.shift
+                            && i.modifiers.alt == binding.alt
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
             }
-        });
+        };
 
-        // We need to check these outside the input closure to avoid borrow issues
-        let ctrl_n = ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_o = ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl);
-        let ctrl_s = ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_shift_s = ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.ctrl && i.modifiers.shift);
-        let ctrl_w = ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl);
-        let ctrl_z = ctx.input(|i| i.key_pressed(egui::Key::Z) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_y = ctx.input(|i| i.key_pressed(egui::Key::Y) && i.modifiers.ctrl);
-        let ctrl_plus = ctx.input(|i| i.key_pressed(egui::Key::Equals) && i.modifiers.ctrl);
-        let ctrl_minus = ctx.input(|i| i.key_pressed(egui::Key::Minus) && i.modifiers.ctrl);
-        let ctrl_zero = ctx.input(|i| i.key_pressed(egui::Key::Num0) && i.modifiers.ctrl);
-        let ctrl_f = ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_h = ctx.input(|i| i.key_pressed(egui::Key::H) && i.modifiers.ctrl);
-        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && !i.modifiers.shift);
-        let shift_f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && i.modifiers.shift);
-        let ctrl_shift_j = ctx.input(|i| i.key_pressed(egui::Key::J) && i.modifiers.ctrl && i.modifiers.shift);
-        let ctrl_shift_r = ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl && i.modifiers.shift);
-        let ctrl_shift_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift);
-        let f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && !i.modifiers.ctrl && !i.modifiers.shift);
-        let shift_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.shift && !i.modifiers.ctrl);
-        let ctrl_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_g = ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_bracket = ctx.input(|i| i.key_pressed(egui::Key::CloseBracket) && i.modifiers.ctrl);
-        let ctrl_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && !i.modifiers.shift);
-        let ctrl_d = ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift);
+        let new_file = pressed("new_file");
+        let open_file = pressed("open_file");
+        let save = pressed("save");
+        let save_as = pressed("save_as");
+        let close_tab = pressed("close_tab");
+        let undo = pressed("undo");
+        let redo = pressed("redo");
+        let zoom_in = pressed("zoom_in");
+        let zoom_out = pressed("zoom_out");
+        let zoom_reset = pressed("zoom_reset");
+        let find = pressed("find");
+        let replace = pressed("replace");
+        let escape = pressed("escape");
+        let find_next = pressed("find_next");
+        let find_prev = pressed("find_prev");
+        let format_json = pressed("format_json");
+        let toggle_macro = pressed("toggle_macro_recording");
+        let play_macro = pressed("play_last_macro");
+        let toggle_bookmark = pressed("toggle_bookmark");
+        let next_bookmark = pressed("next_bookmark");
+        let prev_bookmark = pressed("prev_bookmark");
+        let goto_line = pressed("goto_line");
+        let bracket_jump = pressed("bracket_jump");
+        let command_palette = pressed("command_palette");
+        let select_next = pressed("select_next");
 
-        if ctrl_n { self.action_new(); }
-        if ctrl_o { self.action_open(); }
-        if ctrl_shift_s { self.action_save_as(); }
-        else if ctrl_s { self.action_save(); }
-        if ctrl_w {
+        if new_file { self.action_new(); }
+        if open_file { self.action_open(); }
+        if save_as { self.action_save_as(); }
+        else if save { self.action_save(); }
+        if close_tab {
             let idx = self.tab_manager.active_index();
             self.action_close_tab(idx);
         }
-        if ctrl_z { self.action_undo(); }
-        if ctrl_y { self.action_redo(); }
-        if ctrl_plus { self.action_zoom_in(); }
-        if ctrl_minus { self.action_zoom_out(); }
-        if ctrl_zero { self.action_zoom_reset(); }
-        if ctrl_f { self.action_show_find(); }
-        if ctrl_h { self.action_show_replace(); }
+        if undo { self.action_undo(); }
+        if redo { self.action_redo(); }
+        if zoom_in { self.action_zoom_in(); }
+        if zoom_out { self.action_zoom_out(); }
+        if zoom_reset { self.action_zoom_reset(); }
+        if find { self.action_show_find(); }
+        if replace { self.action_show_replace(); }
         if escape && self.show_search_bar { self.action_close_search(); }
         else if escape && self.column_selection.active { self.column_selection.clear(); }
         else if escape && self.multi_cursor.active { self.multi_cursor.clear(); }
-        if f3 { self.action_find_next(); }
-        if shift_f3 { self.action_find_prev(); }
-        if ctrl_shift_j { self.action_json_format(); }
-        if ctrl_shift_r { self.action_toggle_macro_recording(); }
-        if ctrl_shift_p { self.action_play_last_macro(); }
-        if ctrl_f2 { self.action_toggle_bookmark(); }
-        if f2 { self.action_next_bookmark(); }
-        if shift_f2 { self.action_prev_bookmark(); }
-        if ctrl_g {
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::G));
+        if find_next { self.action_find_next(); }
+        if find_prev { self.action_find_prev(); }
+        if format_json { self.action_json_format(); }
+        if toggle_macro { self.action_toggle_macro_recording(); }
+        if play_macro { self.action_play_last_macro(); }
+        if toggle_bookmark { self.action_toggle_bookmark(); }
+        if next_bookmark { self.action_next_bookmark(); }
+        if prev_bookmark { self.action_prev_bookmark(); }
+        if goto_line {
+            if let Some(binding) = kb.bindings.get("goto_line") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
             self.action_goto_line();
         }
-        if ctrl_bracket {
+        if bracket_jump {
             if let Some(match_byte_pos) = self.matching_bracket_pos {
                 let doc = self.tab_manager.active_document();
                 if let Some((line, col)) = doc.buffer.line_col(match_byte_pos) {
@@ -2012,12 +2039,22 @@ impl NotepadApp {
                 }
             }
         }
-        if ctrl_p {
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P));
+        if command_palette {
+            if let Some(binding) = kb.bindings.get("command_palette") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
             self.action_show_command_palette();
         }
-        if ctrl_d {
-            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::D));
+        if select_next {
+            if let Some(binding) = kb.bindings.get("select_next") {
+                if let Some(egui_key) = binding.to_egui_key() {
+                    let mods = egui::Modifiers { ctrl: binding.ctrl, shift: binding.shift, alt: binding.alt, ..Default::default() };
+                    ctx.input_mut(|i| i.consume_key(mods, egui_key));
+                }
+            }
             self.action_select_next_occurrence(ctx);
         }
 
@@ -2491,7 +2528,7 @@ impl eframe::App for NotepadApp {
 
                     egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
                         for &idx in &filtered {
-                            let (name, shortcut) = commands[idx];
+                            let (ref name, ref shortcut) = commands[idx];
                             let label = if shortcut.is_empty() {
                                 name.to_string()
                             } else {
@@ -2724,6 +2761,41 @@ impl eframe::App for NotepadApp {
                     });
                 });
             self.show_preferences = open;
+        }
+
+        // Keyboard Shortcuts dialog
+        if self.show_keybindings_dialog {
+            let mut open = self.show_keybindings_dialog;
+            egui::Window::new("Keyboard Shortcuts")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(450.0)
+                .default_height(500.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let actions = self.keybindings.all_actions_sorted();
+                        egui::Grid::new("keybindings_grid")
+                            .num_columns(2)
+                            .spacing([20.0, 4.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.strong("Action");
+                                ui.strong("Shortcut");
+                                ui.end_row();
+                                for (_action_id, display_name, shortcut) in &actions {
+                                    ui.label(display_name);
+                                    ui.label(shortcut);
+                                    ui.end_row();
+                                }
+                            });
+                        ui.separator();
+                        if ui.button("Reset to Defaults").clicked() {
+                            self.keybindings = KeyBindings::defaults();
+                            let _ = self.keybindings.save(&KeyBindings::keybindings_path());
+                        }
+                    });
+                });
+            self.show_keybindings_dialog = open;
         }
 
         // File change detection
