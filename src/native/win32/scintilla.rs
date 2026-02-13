@@ -87,7 +87,61 @@ pub const SCI_COLOURISE: u32 = 4003;
 pub const SCI_SETEOLMODE: u32 = 2031;
 pub const SCI_GETEOLMODE: u32 = 2030;
 pub const SC_EOL_CRLF: i32 = 0;
+pub const SC_EOL_CR: i32 = 1;
 pub const SC_EOL_LF: i32 = 2;
+
+// Zoom
+pub const SCI_ZOOMIN: u32 = 2333;
+pub const SCI_ZOOMOUT: u32 = 2334;
+pub const SCI_SETZOOM: u32 = 2373;
+
+// Folding actions
+pub const SCI_TOGGLEFOLD: u32 = 2231;
+pub const SCI_FOLDALL: u32 = 2662;
+pub const SC_FOLDACTION_TOGGLE: i32 = 2;
+pub const SC_FOLDACTION_CONTRACT: i32 = 0;
+pub const SC_FOLDACTION_EXPAND: i32 = 1;
+
+// Bookmarks
+pub const SCI_MARKERADD: u32 = 2043;
+pub const SCI_MARKERDELETE: u32 = 2044;
+pub const SCI_MARKERDELETEALL: u32 = 2045;
+pub const SCI_MARKERGET: u32 = 2046;
+pub const SCI_MARKERNEXT: u32 = 2047;
+pub const SCI_MARKERPREVIOUS: u32 = 2048;
+pub const SC_MARK_CIRCLE: i32 = 0;
+pub const SC_MARK_BACKGROUND: i32 = 22;
+
+// Whitespace visibility
+pub const SCI_SETVIEWWS: u32 = 2021;
+pub const SCI_GETVIEWWS: u32 = 2020;
+pub const SCWS_INVISIBLE: i32 = 0;
+pub const SCWS_VISIBLEALWAYS: i32 = 1;
+
+// Line operations
+pub const SCI_GOTOLINE: u32 = 2024;
+pub const SCI_LINEDUP: u32 = 2404;
+pub const SCI_LINEDELETE: u32 = 2338;
+pub const SCI_LINETRANSPOSE: u32 = 2339;
+pub const SCI_UPPERCASE: u32 = 2341;
+pub const SCI_LOWERCASE: u32 = 2340;
+pub const SCI_LINESCROLLDOWN: u32 = 2342;
+pub const SCI_LINESCROLLUP: u32 = 2343;
+
+// Selection
+pub const SCI_GETSELTEXT: u32 = 2161;
+pub const SCI_REPLACESEL: u32 = 2170;
+pub const SCI_DELETERANGE: u32 = 2645;
+pub const SCI_CLEAR: u32 = 2180;
+
+// Search
+pub const SCI_SEARCHNEXT: u32 = 2367;
+pub const SCI_SEARCHPREV: u32 = 2368;
+pub const SCI_SETTARGETSTART: u32 = 2190;
+pub const SCI_SETTARGETEND: u32 = 2192;
+
+// Lexer language
+pub const SCI_SETLEXERLANGUAGE: u32 = 4006;
 
 // Codepage
 pub const SCI_SETCODEPAGE: u32 = 2037;
@@ -246,6 +300,67 @@ pub fn lexer_for_extension(ext: &str) -> Option<&'static str> {
         "pas" | "pp" | "dpr" => Some("pascal"),
         "tcl" => Some("tcl"),
         "vb" | "vbs" => Some("vb"),
+        "d" => Some("d"),
+        "go" => Some("cpp"),
+        "hs" | "lhs" => Some("haskell"),
+        "jl" => Some("julia"),
+        "kt" | "kts" => Some("kotlin"),
+        "m" | "mm" => Some("objc"),
+        "nim" => Some("nim"),
+        "scala" | "sc" => Some("scala"),
+        "swift" => Some("swift"),
+        "vhd" | "vhdl" => Some("vhdl"),
+        "mat" => Some("matlab"),
         _ => None,
     }
+}
+
+/// All language entries for the Language menu: (display_name, lexer_name).
+pub fn all_languages() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("Plain Text", ""),
+        ("Bash", "bash"),
+        ("Batch", "batch"),
+        ("C", "cpp"),
+        ("C++", "cpp"),
+        ("C#", "cpp"),
+        ("CMake", "cmake"),
+        ("CSS", "css"),
+        ("D", "d"),
+        ("Diff", "diff"),
+        ("Go", "cpp"),
+        ("Haskell", "haskell"),
+        ("HTML", "hypertext"),
+        ("INI/Properties", "props"),
+        ("Java", "cpp"),
+        ("JavaScript", "cpp"),
+        ("JSON", "json"),
+        ("Julia", "julia"),
+        ("Kotlin", "kotlin"),
+        ("LaTeX", "latex"),
+        ("Lua", "lua"),
+        ("Makefile", "makefile"),
+        ("Markdown", "markdown"),
+        ("MATLAB", "matlab"),
+        ("Nim", "nim"),
+        ("Objective-C", "objc"),
+        ("Pascal", "pascal"),
+        ("Perl", "perl"),
+        ("PHP", "phpscript"),
+        ("PowerShell", "powershell"),
+        ("Python", "python"),
+        ("R", "r"),
+        ("Ruby", "ruby"),
+        ("Rust", "rust"),
+        ("Scala", "scala"),
+        ("SQL", "sql"),
+        ("Swift", "swift"),
+        ("TCL", "tcl"),
+        ("TOML", "toml"),
+        ("TypeScript", "cpp"),
+        ("VB", "vb"),
+        ("VHDL", "vhdl"),
+        ("XML", "xml"),
+        ("YAML", "yaml"),
+    ]
 }
