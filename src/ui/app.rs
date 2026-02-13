@@ -97,6 +97,12 @@ pub struct NotepadApp {
     last_file_check: std::time::Instant,
     /// Files needing reload confirmation
     files_changed_externally: Vec<std::path::PathBuf>,
+    /// Find in Files dialog state
+    show_find_in_files: bool,
+    find_in_files_query: String,
+    find_in_files_dir: String,
+    find_in_files_pattern: String,
+    find_in_files_results: Vec<(String, usize, String)>, // (file_path, line_num, line_text)
 }
 
 impl NotepadApp {
@@ -179,6 +185,11 @@ impl NotepadApp {
             file_mod_times: std::collections::HashMap::new(),
             last_file_check: std::time::Instant::now(),
             files_changed_externally: Vec::new(),
+            show_find_in_files: false,
+            find_in_files_query: String::new(),
+            find_in_files_dir: String::new(),
+            find_in_files_pattern: String::from("*"),
+            find_in_files_results: Vec::new(),
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -390,7 +401,7 @@ impl NotepadApp {
     }
 
     fn request_repaint_if_dialog(&self, ctx: &egui::Context) {
-        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette {
+        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette || self.show_find_in_files {
             ctx.request_repaint();
         }
     }
@@ -793,7 +804,7 @@ impl NotepadApp {
                 ui.close_menu();
             }
             if ui.button("Find in Files...").clicked() {
-                // TODO: implement find in files dialog
+                self.show_find_in_files = true;
                 ui.close_menu();
             }
             ui.separator();
@@ -2177,6 +2188,96 @@ impl eframe::App for NotepadApp {
                 self.execute_command(idx);
             } else if close {
                 self.show_command_palette = false;
+            }
+        }
+
+        // Find in Files dialog
+        if self.show_find_in_files {
+            let mut close = false;
+            let mut do_search = false;
+            egui::Window::new("Find in Files")
+                .collapsible(false)
+                .resizable(true)
+                .default_width(500.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Directory:");
+                        ui.text_edit_singleline(&mut self.find_in_files_dir);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Pattern:");
+                        ui.text_edit_singleline(&mut self.find_in_files_pattern);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Search:");
+                        let resp = ui.text_edit_singleline(&mut self.find_in_files_query);
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            do_search = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Search").clicked() {
+                            do_search = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+
+                    if !self.find_in_files_results.is_empty() {
+                        ui.separator();
+                        ui.label(format!("{} matches found", self.find_in_files_results.len()));
+                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            let results = self.find_in_files_results.clone();
+                            for (path, line_num, line_text) in &results {
+                                let label = format!("{}:{}: {}", path, line_num, line_text.trim());
+                                if ui.selectable_label(false, &label).clicked() {
+                                    self.open_file_path(std::path::PathBuf::from(path));
+                                    self.tab_manager.active_document_mut().cursor.set_position(line_num.saturating_sub(1), 0);
+                                    self.show_find_in_files = false;
+                                }
+                            }
+                        });
+                    }
+                });
+
+            if do_search && !self.find_in_files_query.is_empty() && !self.find_in_files_dir.is_empty() {
+                let mut results = Vec::new();
+                let dir = std::path::Path::new(&self.find_in_files_dir);
+                if dir.is_dir() {
+                    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+                        if entry.file_type().is_file() {
+                            let path = entry.path();
+                            let matches_pattern = if self.find_in_files_pattern == "*" {
+                                true
+                            } else {
+                                let patterns: Vec<&str> = self.find_in_files_pattern.split(';').collect();
+                                patterns.iter().any(|p| {
+                                    let p = p.trim().trim_start_matches('*');
+                                    path.to_string_lossy().ends_with(p)
+                                })
+                            };
+                            if matches_pattern {
+                                if let Ok(content) = std::fs::read_to_string(path) {
+                                    for (i, line) in content.lines().enumerate() {
+                                        if line.contains(&self.find_in_files_query) {
+                                            results.push((
+                                                path.to_string_lossy().to_string(),
+                                                i + 1,
+                                                line.to_string(),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.find_in_files_results = results;
+            }
+            if close {
+                self.show_find_in_files = false;
             }
         }
 
