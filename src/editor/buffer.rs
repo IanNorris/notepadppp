@@ -1,4 +1,5 @@
 use ropey::Rope;
+use std::io::BufReader;
 
 #[derive(Debug, Clone)]
 pub enum EditOperation {
@@ -13,6 +14,8 @@ pub struct TextBuffer {
     modified: bool,
     undo_stack: Vec<EditOperation>,
     redo_stack: Vec<EditOperation>,
+    /// Optional limit on undo history size (for large files).
+    undo_limit: Option<usize>,
 }
 
 impl Default for TextBuffer {
@@ -28,6 +31,7 @@ impl TextBuffer {
             modified: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            undo_limit: None,
         }
     }
 
@@ -37,6 +41,35 @@ impl TextBuffer {
             modified: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            undo_limit: None,
+        }
+    }
+
+    /// Create a buffer by streaming from a reader (efficient for large files).
+    pub fn from_reader<R: std::io::Read>(reader: R) -> std::io::Result<Self> {
+        let buf_reader = BufReader::new(reader);
+        let rope = Rope::from_reader(buf_reader)?;
+        Ok(Self {
+            rope,
+            modified: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            undo_limit: None,
+        })
+    }
+
+    /// Set a limit on the undo history. `None` means unlimited.
+    pub fn set_undo_limit(&mut self, limit: Option<usize>) {
+        self.undo_limit = limit;
+        if let Some(max) = limit {
+            self.enforce_undo_limit(max);
+        }
+    }
+
+    fn enforce_undo_limit(&mut self, max: usize) {
+        if self.undo_stack.len() > max {
+            let excess = self.undo_stack.len() - max;
+            self.undo_stack.drain(..excess);
         }
     }
 
@@ -48,6 +81,9 @@ impl TextBuffer {
             pos: byte_pos,
             text: text.to_string(),
         });
+        if let Some(max) = self.undo_limit {
+            self.enforce_undo_limit(max);
+        }
         self.redo_stack.clear();
         self.modified = true;
     }
@@ -62,6 +98,9 @@ impl TextBuffer {
             pos: start,
             text: deleted,
         });
+        if let Some(max) = self.undo_limit {
+            self.enforce_undo_limit(max);
+        }
         self.redo_stack.clear();
         self.modified = true;
     }

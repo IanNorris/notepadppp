@@ -1,8 +1,10 @@
 use std::io;
 use std::path::PathBuf;
 
+use super::buffer::TextBuffer;
 use super::document::Document;
 use crate::io::file_io;
+use crate::io::large_file::LargeFileInfo;
 
 /// Manages multiple open documents as tabs.
 #[derive(Debug)]
@@ -46,11 +48,33 @@ impl TabManager {
 
     /// Open a file, creating a new tab. Returns the tab index.
     pub fn open_file(&mut self, path: PathBuf) -> io::Result<usize> {
-        let (content, encoding, line_ending) = file_io::read_file(&path)?;
-        let doc = Document::from_str(&content)
-            .with_path(path)
-            .with_encoding(encoding)
-            .with_line_ending(line_ending);
+        let large_info = LargeFileInfo::from_path(&path)?;
+
+        let doc = if large_info.is_large {
+            // Use streaming load via Rope::from_reader for large files
+            let file = std::fs::File::open(&path)?;
+            let buffer = TextBuffer::from_reader(file)?;
+            let text_sample = buffer.line(0).unwrap_or_default();
+            // Detect encoding from first bytes for metadata (approximate)
+            let sample_bytes = text_sample.as_bytes();
+            let encoding = file_io::detect_encoding(sample_bytes);
+            let line_ending = file_io::detect_line_ending(&text_sample);
+            let mut doc = Document::new();
+            doc.buffer = buffer;
+            doc.path = Some(path);
+            doc.encoding = encoding;
+            doc.line_ending = line_ending;
+            doc = doc.with_large_file_info(large_info);
+            doc
+        } else {
+            let (content, encoding, line_ending) = file_io::read_file(&path)?;
+            Document::from_str(&content)
+                .with_path(path)
+                .with_encoding(encoding)
+                .with_line_ending(line_ending)
+                .with_large_file_info(large_info)
+        };
+
         self.tabs.push(doc);
         self.untitled_names.push(None);
         let idx = self.tabs.len() - 1;
@@ -202,6 +226,8 @@ impl TabManager {
         }
         let path = self.tabs[index].path.clone()
             .ok_or("Tab has no file path")?;
+        let large_info = LargeFileInfo::from_path(&path)
+            .map_err(|e| format!("Failed to stat file: {}", e))?;
         let (content, encoding, line_ending) = file_io::read_file(&path)
             .map_err(|e| format!("Failed to read file: {}", e))?;
         let len = self.tabs[index].buffer.len_bytes();
@@ -214,6 +240,10 @@ impl TabManager {
         self.tabs[index].buffer.set_modified(false);
         self.tabs[index].encoding = encoding;
         self.tabs[index].line_ending = line_ending;
+        if let Some(limit) = large_info.undo_limit {
+            self.tabs[index].buffer.set_undo_limit(Some(limit));
+        }
+        self.tabs[index].large_file_info = large_info;
         Ok(())
     }
 }

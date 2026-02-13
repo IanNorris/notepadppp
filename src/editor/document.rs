@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use super::bookmarks::BookmarkManager;
 use super::buffer::TextBuffer;
 use super::cursor::CursorState;
+use crate::io::large_file::LargeFileInfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -41,6 +42,7 @@ pub struct Document {
     pub language: String,
     pub read_only: bool,
     pub bookmarks: BookmarkManager,
+    pub large_file_info: LargeFileInfo,
 }
 
 impl Default for Document {
@@ -60,6 +62,7 @@ impl Document {
             language: String::from("Plain Text"),
             read_only: false,
             bookmarks: BookmarkManager::default(),
+            large_file_info: LargeFileInfo::default(),
         }
     }
 
@@ -87,6 +90,14 @@ impl Document {
 
     pub fn with_language(mut self, lang: impl Into<String>) -> Self {
         self.language = lang.into();
+        self
+    }
+
+    pub fn with_large_file_info(mut self, info: LargeFileInfo) -> Self {
+        if let Some(limit) = info.undo_limit {
+            self.buffer.set_undo_limit(Some(limit));
+        }
+        self.large_file_info = info;
         self
     }
 

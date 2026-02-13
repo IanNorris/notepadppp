@@ -118,6 +118,12 @@ pub struct NotepadApp {
     keybindings: KeyBindings,
     /// Whether to show the keyboard shortcuts dialog
     show_keybindings_dialog: bool,
+    /// Whether to show the large file warning dialog
+    show_large_file_warning: bool,
+    /// Path of a large file pending user confirmation
+    pending_large_file: Option<PathBuf>,
+    /// Size info for the pending large file
+    pending_large_file_info: Option<crate::io::large_file::LargeFileInfo>,
 }
 
 impl NotepadApp {
@@ -212,6 +218,9 @@ impl NotepadApp {
             keybindings: KeyBindings::load(&KeyBindings::keybindings_path())
                 .unwrap_or_default(),
             show_keybindings_dialog: false,
+            show_large_file_warning: false,
+            pending_large_file: None,
+            pending_large_file_info: None,
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -428,7 +437,7 @@ impl NotepadApp {
     }
 
     fn request_repaint_if_dialog(&self, ctx: &egui::Context) {
-        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette || self.show_find_in_files || self.show_keybindings_dialog {
+        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences || self.show_command_palette || self.show_find_in_files || self.show_keybindings_dialog || self.show_large_file_warning {
             ctx.request_repaint();
         }
     }
@@ -445,6 +454,19 @@ impl NotepadApp {
     }
 
     fn open_file_path(&mut self, path: PathBuf) {
+        // Check file size and warn for large files
+        if let Ok(info) = crate::io::large_file::LargeFileInfo::from_path(&path) {
+            if info.is_large {
+                self.pending_large_file = Some(path);
+                self.pending_large_file_info = Some(info);
+                self.show_large_file_warning = true;
+                return;
+            }
+        }
+        self.open_file_path_confirmed(path);
+    }
+
+    fn open_file_path_confirmed(&mut self, path: PathBuf) {
         match self.tab_manager.open_file(path.clone()) {
             Ok(idx) => {
                 // Auto-detect language from extension
@@ -1508,7 +1530,16 @@ impl NotepadApp {
         let extra_cursor_offsets = self.multi_cursor.cursor_offsets();
         let extra_selections = self.multi_cursor.selections();
 
-        if self.show_minimap {
+        // Disable syntax highlighting for large files by using an empty extension
+        let large_info = &self.tab_manager.active_document().large_file_info;
+        let effective_ext = if large_info.syntax_disabled {
+            String::new()
+        } else {
+            self.file_extension.clone()
+        };
+        let minimap_allowed = self.show_minimap && !large_info.minimap_disabled;
+
+        if minimap_allowed {
             let available = ui.available_size();
             let minimap_width = 120.0;
             let editor_width = available.x - minimap_width - 4.0;
@@ -1524,7 +1555,7 @@ impl NotepadApp {
                         &self.search_results_matches,
                         self.current_match_index,
                         &self.syntax_highlighter,
-                        &self.file_extension,
+                        &effective_ext,
                         &bookmarks,
                         self.matching_bracket_pos,
                         &extra_cursor_offsets,
@@ -1548,7 +1579,7 @@ impl NotepadApp {
                 &self.search_results_matches,
                 self.current_match_index,
                 &self.syntax_highlighter,
-                &self.file_extension,
+                &effective_ext,
                 &bookmarks,
                 self.matching_bracket_pos,
                 &extra_cursor_offsets,
@@ -2229,7 +2260,7 @@ impl eframe::App for NotepadApp {
             });
         }
 
-        if self.show_function_list {
+        if self.show_function_list && !self.tab_manager.active_document().large_file_info.function_list_disabled {
             egui::SidePanel::left("function_list_panel")
                 .default_width(200.0)
                 .show(ctx, |ui| {
@@ -2761,6 +2792,60 @@ impl eframe::App for NotepadApp {
                     });
                 });
             self.show_preferences = open;
+        }
+
+        // Large file warning dialog
+        if self.show_large_file_warning {
+            let size_str = self.pending_large_file_info.as_ref()
+                .map(|i| i.size_display())
+                .unwrap_or_default();
+            let mut open_anyway = false;
+            let mut cancel = false;
+            egui::Window::new("Large File Warning")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "This file is {}. Large files may impact performance.",
+                        size_str
+                    ));
+                    if let Some(ref info) = self.pending_large_file_info {
+                        ui.separator();
+                        if info.syntax_disabled {
+                            ui.label("• Syntax highlighting will be disabled");
+                        }
+                        if info.minimap_disabled {
+                            ui.label("• Minimap will be disabled");
+                        }
+                        if info.function_list_disabled {
+                            ui.label("• Function list will be disabled");
+                        }
+                        if info.undo_limit.is_some() {
+                            ui.label("• Undo history will be limited");
+                        }
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Open Anyway").clicked() {
+                            open_anyway = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if open_anyway {
+                if let Some(path) = self.pending_large_file.take() {
+                    self.show_large_file_warning = false;
+                    self.pending_large_file_info = None;
+                    self.open_file_path_confirmed(path);
+                }
+            } else if cancel {
+                self.show_large_file_warning = false;
+                self.pending_large_file = None;
+                self.pending_large_file_info = None;
+            }
         }
 
         // Keyboard Shortcuts dialog
