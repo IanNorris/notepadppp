@@ -83,7 +83,8 @@ fn handle_shell_registration(cli: &CliArgs) {
         .unwrap_or_else(|_| "notepadppp".to_string());
 
     let associations = notepadppp::platform::default_associations();
-    let _context_menu = notepadppp::platform::default_context_menu_entries(&exe_path);
+    let context_menu = notepadppp::platform::default_context_menu_entries(&exe_path);
+    let _ = &context_menu; // used in cfg(windows) blocks
 
     if cli.register_shell {
         #[cfg(target_os = "windows")]
