@@ -1,6 +1,6 @@
 use egui::{self, Color32, RichText, Ui};
 
-use crate::search::{SearchEngine, SearchHistory, SearchMatch};
+use crate::search::{SearchEngine, SearchHistory, SearchMatch, SearchMode};
 
 /// Action returned from the search bar UI to the parent app.
 pub enum SearchAction {
@@ -46,6 +46,11 @@ impl SearchBarState {
         engine.case_sensitive = self.case_sensitive;
         engine.whole_word = self.whole_word;
         engine.use_regex = self.use_regex;
+        engine.search_mode = if self.use_regex {
+            SearchMode::Regex
+        } else {
+            SearchMode::Normal
+        };
     }
 }
 

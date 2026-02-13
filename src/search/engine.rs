@@ -248,7 +248,11 @@ impl SearchEngine {
         };
 
         let count = re.find_iter(text).count();
-        let new_text = re.replace_all(text, replacement.as_str()).to_string();
+        let new_text = if self.search_mode == SearchMode::Regex {
+            re.replace_all(text, replacement.as_str()).to_string()
+        } else {
+            re.replace_all(text, regex::NoExpand(replacement.as_str())).to_string()
+        };
         (new_text, count)
     }
 
