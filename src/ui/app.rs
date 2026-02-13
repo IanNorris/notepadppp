@@ -83,6 +83,14 @@ pub struct NotepadApp {
     app_settings: crate::io::settings::AppSettings,
     /// Byte position of the matching bracket (if any)
     matching_bracket_pos: Option<usize>,
+    /// Time of last auto-save
+    last_auto_save: std::time::Instant,
+    /// Track file modification times for change detection
+    file_mod_times: std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+    /// Time of last file change check
+    last_file_check: std::time::Instant,
+    /// Files needing reload confirmation
+    files_changed_externally: Vec<std::path::PathBuf>,
 }
 
 impl NotepadApp {
@@ -115,7 +123,7 @@ impl NotepadApp {
             .map(|p| SyntaxHighlighter::extension_from_path(p))
             .unwrap_or_default();
         let text = tab_manager.active_document().buffer.text();
-        Self {
+        let mut app = Self {
             tab_manager,
             recent_files: Self::load_recent_files(),
             show_status_bar: true,
@@ -158,7 +166,26 @@ impl NotepadApp {
             )
             .unwrap_or_default(),
             matching_bracket_pos: None,
+            last_auto_save: std::time::Instant::now(),
+            file_mod_times: std::collections::HashMap::new(),
+            last_file_check: std::time::Instant::now(),
+            files_changed_externally: Vec::new(),
+        };
+
+        // Auto-restore session if enabled and no files were specified on command line
+        if app.app_settings.remember_session && files.is_empty() {
+            if let Some(config_dir) = dirs::config_dir() {
+                let path = config_dir.join("notepadppp").join("sessions").join("session.json");
+                if path.exists() {
+                    if let Ok(sess) = session::load_session(&path) {
+                        let _ = session::restore_session(&sess, &mut app.tab_manager);
+                        app.invalidate_cache();
+                    }
+                }
+            }
         }
+
+        app
     }
 
     fn load_recent_files() -> RecentFiles {
@@ -248,9 +275,15 @@ impl NotepadApp {
                     doc.language = lang;
                 }
                 self.file_extension = ext;
-                self.recent_files.add(path);
+                self.recent_files.add(path.clone());
                 self.save_recent_files();
                 self.invalidate_cache();
+                // Track file modification time
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    if let Ok(modified) = meta.modified() {
+                        self.file_mod_times.insert(path.clone(), modified);
+                    }
+                }
             }
             Err(e) => {
                 log::error!("Failed to open file: {}", e);
@@ -1616,6 +1649,11 @@ impl NotepadApp {
 
 impl eframe::App for NotepadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Auto-save session on close request
+        if ctx.input(|i| i.viewport().close_requested()) && self.app_settings.remember_session {
+            self.action_save_session();
+        }
+
         self.handle_keyboard_shortcuts(ctx);
 
         // Update bracket matching
@@ -1942,6 +1980,60 @@ impl eframe::App for NotepadApp {
             }
         }
 
+        // File changed externally dialog
+        if !self.files_changed_externally.is_empty() {
+            let files = self.files_changed_externally.clone();
+            let mut reload_all = false;
+            let mut dismiss = false;
+            egui::Window::new("Files Changed Externally")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label("The following files have been modified outside the editor:");
+                    for f in &files {
+                        ui.label(format!("  • {}", f.display()));
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Reload All").clicked() {
+                            reload_all = true;
+                        }
+                        if ui.button("Ignore").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                });
+            if reload_all {
+                for path in &files {
+                    for i in 0..self.tab_manager.tab_count() {
+                        if let Some(doc) = self.tab_manager.get_document(i) {
+                            if doc.path.as_ref() == Some(path) {
+                                let _ = self.tab_manager.reload_tab(i);
+                                if let Ok(meta) = std::fs::metadata(path) {
+                                    if let Ok(modified) = meta.modified() {
+                                        self.file_mod_times.insert(path.clone(), modified);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                self.files_changed_externally.clear();
+                self.invalidate_cache();
+            } else if dismiss {
+                // Update mod times to current
+                for path in &files {
+                    if let Ok(meta) = std::fs::metadata(path) {
+                        if let Ok(modified) = meta.modified() {
+                            self.file_mod_times.insert(path.clone(), modified);
+                        }
+                    }
+                }
+                self.files_changed_externally.clear();
+            }
+        }
+
         // Preferences window
         if self.show_preferences {
             let mut open = self.show_preferences;
@@ -2007,6 +2099,45 @@ impl eframe::App for NotepadApp {
                     });
                 });
             self.show_preferences = open;
+        }
+
+        // File change detection
+        if self.last_file_check.elapsed().as_secs() >= 2 {
+            self.last_file_check = std::time::Instant::now();
+            let mut changed = Vec::new();
+            for i in 0..self.tab_manager.tab_count() {
+                if let Some(doc) = self.tab_manager.get_document(i) {
+                    if let Some(ref path) = doc.path {
+                        if let Ok(meta) = std::fs::metadata(path) {
+                            if let Ok(modified) = meta.modified() {
+                                if let Some(prev) = self.file_mod_times.get(path) {
+                                    if modified > *prev {
+                                        changed.push(path.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed.is_empty() {
+                self.files_changed_externally = changed;
+            }
+        }
+
+        // Auto-save
+        if self.app_settings.auto_save {
+            let elapsed = self.last_auto_save.elapsed().as_secs();
+            if elapsed >= self.app_settings.auto_save_interval_secs {
+                self.last_auto_save = std::time::Instant::now();
+                for i in 0..self.tab_manager.tab_count() {
+                    if let Some(doc) = self.tab_manager.get_document(i) {
+                        if doc.is_modified() && doc.path.is_some() {
+                            let _ = self.tab_manager.save_tab(i);
+                        }
+                    }
+                }
+            }
         }
 
         self.request_repaint_if_dialog(ctx);

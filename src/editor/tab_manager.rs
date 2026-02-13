@@ -194,4 +194,26 @@ impl TabManager {
     pub fn get_document_mut(&mut self, index: usize) -> Option<&mut Document> {
         self.tabs.get_mut(index)
     }
+
+    /// Reload a tab's content from disk.
+    pub fn reload_tab(&mut self, index: usize) -> Result<(), String> {
+        if index >= self.tabs.len() {
+            return Err("Invalid tab index".to_string());
+        }
+        let path = self.tabs[index].path.clone()
+            .ok_or("Tab has no file path")?;
+        let (content, encoding, line_ending) = file_io::read_file(&path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let len = self.tabs[index].buffer.len_bytes();
+        if len > 0 {
+            self.tabs[index].buffer.delete(0, len);
+        }
+        if !content.is_empty() {
+            self.tabs[index].buffer.insert(0, &content);
+        }
+        self.tabs[index].buffer.set_modified(false);
+        self.tabs[index].encoding = encoding;
+        self.tabs[index].line_ending = line_ending;
+        Ok(())
+    }
 }
