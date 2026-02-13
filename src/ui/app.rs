@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
+use crate::search::{SearchEngine, SearchHistory, SearchMatch};
 
 use super::editor_widget::editor_widget;
+use super::search_dialog::{self, SearchAction, SearchBarState};
 
 /// Main application state implementing `eframe::App`.
 pub struct NotepadApp {
@@ -24,6 +26,15 @@ pub struct NotepadApp {
     cache_valid: bool,
     /// Track which tab index the cache belongs to
     cache_tab_index: usize,
+    // Search state
+    search_engine: SearchEngine,
+    search_history: SearchHistory,
+    search_bar_state: SearchBarState,
+    show_search_bar: bool,
+    show_replace: bool,
+    show_search_results: bool,
+    search_results_matches: Vec<SearchMatch>,
+    current_match_index: Option<usize>,
 }
 
 impl NotepadApp {
@@ -42,6 +53,14 @@ impl NotepadApp {
             text_cache: text,
             cache_valid: true,
             cache_tab_index: 0,
+            search_engine: SearchEngine::new(),
+            search_history: SearchHistory::new(50),
+            search_bar_state: SearchBarState::default(),
+            show_search_bar: false,
+            show_replace: false,
+            show_search_results: false,
+            search_results_matches: Vec::new(),
+            current_match_index: None,
         }
     }
 
@@ -201,6 +220,87 @@ impl NotepadApp {
         self.tab_manager.active_document_mut().line_ending = le;
     }
 
+    // --- Search Actions ---
+
+    fn action_show_find(&mut self) {
+        self.show_search_bar = true;
+        self.show_replace = false;
+        self.search_bar_state.request_focus = true;
+    }
+
+    fn action_show_replace(&mut self) {
+        self.show_search_bar = true;
+        self.show_replace = true;
+        self.search_bar_state.request_focus = true;
+    }
+
+    fn action_close_search(&mut self) {
+        self.show_search_bar = false;
+        self.show_replace = false;
+        self.show_search_results = false;
+    }
+
+    fn refresh_search_results(&mut self) {
+        self.search_bar_state.apply_to_engine(&mut self.search_engine);
+        self.sync_cache_from_buffer();
+        self.search_results_matches = self.search_engine.find_all(&self.text_cache);
+        self.show_search_results = !self.search_results_matches.is_empty();
+        // Reset match index
+        self.current_match_index = if self.search_results_matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+    }
+
+    fn action_find_next(&mut self) {
+        if self.search_results_matches.is_empty() {
+            return;
+        }
+        self.current_match_index = Some(match self.current_match_index {
+            Some(idx) => (idx + 1) % self.search_results_matches.len(),
+            None => 0,
+        });
+    }
+
+    fn action_find_prev(&mut self) {
+        if self.search_results_matches.is_empty() {
+            return;
+        }
+        self.current_match_index = Some(match self.current_match_index {
+            Some(0) => self.search_results_matches.len() - 1,
+            Some(idx) => idx - 1,
+            None => self.search_results_matches.len() - 1,
+        });
+    }
+
+    fn action_replace_next(&mut self) {
+        self.search_bar_state.apply_to_engine(&mut self.search_engine);
+        self.sync_cache_from_buffer();
+        let from_pos = self.current_match_index
+            .and_then(|i| self.search_results_matches.get(i))
+            .map(|m| m.start)
+            .unwrap_or(0);
+        if let Some((new_text, _)) = self.search_engine.replace_next(&self.text_cache, from_pos) {
+            self.text_cache = new_text;
+            self.sync_buffer_from_cache();
+            self.invalidate_cache();
+            self.refresh_search_results();
+        }
+    }
+
+    fn action_replace_all(&mut self) {
+        self.search_bar_state.apply_to_engine(&mut self.search_engine);
+        self.sync_cache_from_buffer();
+        let (new_text, count) = self.search_engine.replace_all(&self.text_cache);
+        if count > 0 {
+            self.text_cache = new_text;
+            self.sync_buffer_from_cache();
+            self.invalidate_cache();
+            self.refresh_search_results();
+        }
+    }
+
     // --- UI Rendering ---
 
     fn render_menu_bar(&mut self, ui: &mut Ui) {
@@ -346,15 +446,15 @@ impl NotepadApp {
     fn render_search_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Search", |ui| {
             if ui.button("Find...          Ctrl+F").clicked() {
-                // TODO: implement find dialog
+                self.action_show_find();
                 ui.close_menu();
             }
             if ui.button("Replace...       Ctrl+H").clicked() {
-                // TODO: implement replace dialog
+                self.action_show_replace();
                 ui.close_menu();
             }
             if ui.button("Find in Files...").clicked() {
-                // TODO: implement find in files
+                // TODO: implement find in files dialog
                 ui.close_menu();
             }
         });
@@ -546,6 +646,8 @@ impl NotepadApp {
             self.font_size,
             self.show_line_numbers,
             self.word_wrap,
+            &self.search_results_matches,
+            self.current_match_index,
         );
         self.sync_buffer_from_cache();
     }
@@ -722,6 +824,11 @@ impl NotepadApp {
         let ctrl_plus = ctx.input(|i| i.key_pressed(egui::Key::Equals) && i.modifiers.ctrl);
         let ctrl_minus = ctx.input(|i| i.key_pressed(egui::Key::Minus) && i.modifiers.ctrl);
         let ctrl_zero = ctx.input(|i| i.key_pressed(egui::Key::Num0) && i.modifiers.ctrl);
+        let ctrl_f = ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl && !i.modifiers.shift);
+        let ctrl_h = ctx.input(|i| i.key_pressed(egui::Key::H) && i.modifiers.ctrl);
+        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && !i.modifiers.shift);
+        let shift_f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -736,6 +843,11 @@ impl NotepadApp {
         if ctrl_plus { self.action_zoom_in(); }
         if ctrl_minus { self.action_zoom_out(); }
         if ctrl_zero { self.action_zoom_reset(); }
+        if ctrl_f { self.action_show_find(); }
+        if ctrl_h { self.action_show_replace(); }
+        if escape && self.show_search_bar { self.action_close_search(); }
+        if f3 { self.action_find_next(); }
+        if shift_f3 { self.action_find_prev(); }
     }
 }
 
@@ -751,9 +863,62 @@ impl eframe::App for NotepadApp {
             self.render_tab_bar(ui);
         });
 
+        // Search bar panel (below tabs, above editor)
+        if self.show_search_bar {
+            let match_count = self.search_results_matches.len();
+            let current_idx = self.current_match_index;
+            let show_replace = self.show_replace;
+
+            egui::TopBottomPanel::top("search_bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Toggle expand button for replace mode
+                    let arrow = if self.show_replace { "▼" } else { "►" };
+                    if ui.small_button(arrow).on_hover_text("Toggle Replace").clicked() {
+                        self.show_replace = !self.show_replace;
+                    }
+
+                    ui.vertical(|ui| {
+                        let action = search_dialog::render_search_bar(
+                            ui,
+                            &mut self.search_bar_state,
+                            show_replace,
+                            match_count,
+                            current_idx,
+                        );
+
+                        match action {
+                            SearchAction::Close => self.action_close_search(),
+                            SearchAction::FindNext => self.action_find_next(),
+                            SearchAction::FindPrev => self.action_find_prev(),
+                            SearchAction::ReplaceNext => self.action_replace_next(),
+                            SearchAction::ReplaceAll => self.action_replace_all(),
+                            SearchAction::QueryChanged => self.refresh_search_results(),
+                            SearchAction::None => {}
+                        }
+                    });
+                });
+            });
+        }
+
         if self.show_status_bar {
             egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
                 self.render_status_bar(ui);
+            });
+        }
+
+        // Search results panel (above status bar, below editor)
+        if self.show_search_bar && self.show_search_results && !self.search_results_matches.is_empty() {
+            let matches = self.search_results_matches.clone();
+            let current_idx = self.current_match_index;
+            egui::TopBottomPanel::bottom("search_results").show(ctx, |ui| {
+                if let Some(clicked) = search_dialog::render_search_results_panel(
+                    ui,
+                    &matches,
+                    current_idx,
+                    &self.search_history,
+                ) {
+                    self.current_match_index = Some(clicked);
+                }
             });
         }
 

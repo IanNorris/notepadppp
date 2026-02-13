@@ -1,6 +1,8 @@
-use egui::{self, FontId, RichText, ScrollArea, TextEdit, Ui, Vec2};
+use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, Ui, Vec2};
 
-/// Renders the editor widget with optional line numbers and word wrap.
+use crate::search::SearchMatch;
+
+/// Renders the editor widget with optional line numbers, word wrap, and search highlights.
 /// Operates on a `&mut String` that is synced with the active document's buffer.
 pub fn editor_widget(
     ui: &mut Ui,
@@ -8,12 +10,13 @@ pub fn editor_widget(
     font_size: f32,
     show_line_numbers: bool,
     word_wrap: bool,
+    search_matches: &[SearchMatch],
+    current_match_index: Option<usize>,
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
 
     if show_line_numbers {
-        // Layout: line numbers gutter + editor
         let line_count = text.lines().count().max(1);
         let gutter_width = gutter_width_for(line_count, font_size);
 
@@ -26,7 +29,6 @@ pub fn editor_widget(
                 .auto_shrink([true, false])
                 .show(ui, |ui| {
                     let line_count = text.lines().count().max(1);
-                    // Account for trailing newline
                     let extra = if text.ends_with('\n') { 1 } else { 0 };
                     let total_lines = line_count + extra;
                     let mut gutter_text = String::with_capacity(total_lines * 5);
@@ -54,32 +56,83 @@ pub fn editor_widget(
                     if !word_wrap {
                         editor = editor.desired_rows(1);
                     }
-                    ui.add_sized(
+                    let response = ui.add_sized(
                         Vec2::new(ui.available_width(), ui.available_height()),
                         editor,
                     );
+                    paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
                 });
         });
     } else {
-        // No gutter, just the editor
         ScrollArea::both()
             .id_salt("editor_scroll_no_gutter")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut editor = TextEdit::multiline(text)
-                    .font(font)
+                    .font(font.clone())
                     .desired_width(f32::INFINITY)
                     .code_editor()
                     .lock_focus(true);
                 if !word_wrap {
                     editor = editor.desired_rows(1);
                 }
-                ui.add_sized(
+                let response = ui.add_sized(
                     Vec2::new(ui.available_width(), ui.available_height()),
                     editor,
                 );
+                paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
             });
     }
+}
+
+/// Paint colored rectangles over search match positions in the editor.
+fn paint_search_highlights(
+    ui: &Ui,
+    response: &egui::Response,
+    text: &str,
+    font_size: f32,
+    matches: &[SearchMatch],
+    current_match_index: Option<usize>,
+) {
+    if matches.is_empty() {
+        return;
+    }
+
+    let painter = ui.painter();
+    let text_rect = response.rect;
+    let char_width = font_size * 0.6;
+    let line_height = font_size * 1.4;
+    // Approximate text area origin (accounts for padding in code_editor)
+    let text_origin = egui::pos2(text_rect.left() + 4.0, text_rect.top() + 2.0);
+
+    let highlight_color = Color32::from_rgba_premultiplied(200, 160, 40, 80);
+    let current_color = Color32::from_rgba_premultiplied(255, 140, 0, 120);
+
+    for (i, m) in matches.iter().enumerate() {
+        let col = col_in_line(text, m.start);
+        let y = text_origin.y + (m.line as f32) * line_height;
+        let x = text_origin.x + (col as f32) * char_width;
+        let match_len = m.end - m.start;
+        let w = (match_len as f32) * char_width;
+
+        let rect = Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, line_height));
+
+        // Only paint if within the visible area
+        if rect.intersects(text_rect) {
+            let color = if current_match_index == Some(i) {
+                current_color
+            } else {
+                highlight_color
+            };
+            painter.rect_filled(rect, 2.0, color);
+        }
+    }
+}
+
+/// Compute the column offset of a byte position within its line.
+fn col_in_line(text: &str, byte_offset: usize) -> usize {
+    let line_start = text[..byte_offset].rfind('\n').map_or(0, |p| p + 1);
+    text[line_start..byte_offset].chars().count()
 }
 
 fn digit_count(n: usize) -> usize {
