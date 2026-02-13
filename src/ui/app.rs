@@ -1,6 +1,7 @@
 use egui::{self, Align, Color32, Layout, Rect, RichText, Ui};
 use std::path::PathBuf;
 
+use crate::editor::column_select::ColumnSelection;
 use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::macros::MacroRecorder;
 use crate::editor::multi_cursor::MultiCursorState;
@@ -110,6 +111,8 @@ pub struct NotepadApp {
     find_in_files_dir: String,
     find_in_files_pattern: String,
     find_in_files_results: Vec<(String, usize, String)>, // (file_path, line_num, line_text)
+    /// Column (rectangular) selection state
+    column_selection: ColumnSelection,
 }
 
 impl NotepadApp {
@@ -200,6 +203,7 @@ impl NotepadApp {
             find_in_files_dir: String::new(),
             find_in_files_pattern: String::from("*"),
             find_in_files_results: Vec::new(),
+            column_selection: ColumnSelection::new(),
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -1512,6 +1516,7 @@ impl NotepadApp {
                         self.matching_bracket_pos,
                         &extra_cursor_offsets,
                         &extra_selections,
+                        &self.column_selection,
                     );
                 });
 
@@ -1535,6 +1540,7 @@ impl NotepadApp {
                 self.matching_bracket_pos,
                 &extra_cursor_offsets,
                 &extra_selections,
+                &self.column_selection,
             );
         }
         self.sync_buffer_from_cache();
@@ -1984,6 +1990,7 @@ impl NotepadApp {
         if ctrl_f { self.action_show_find(); }
         if ctrl_h { self.action_show_replace(); }
         if escape && self.show_search_bar { self.action_close_search(); }
+        else if escape && self.column_selection.active { self.column_selection.clear(); }
         else if escape && self.multi_cursor.active { self.multi_cursor.clear(); }
         if f3 { self.action_find_next(); }
         if shift_f3 { self.action_find_prev(); }
@@ -2013,6 +2020,86 @@ impl NotepadApp {
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::D));
             self.action_select_next_occurrence(ctx);
         }
+
+        // Alt+Shift+Arrow for column selection
+        let alt_shift_up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.alt && i.modifiers.shift);
+        let alt_shift_down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.alt && i.modifiers.shift);
+        let alt_shift_left = ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.alt && i.modifiers.shift);
+        let alt_shift_right = ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) && i.modifiers.alt && i.modifiers.shift);
+
+        if alt_shift_up || alt_shift_down || alt_shift_left || alt_shift_right {
+            let doc = self.tab_manager.active_document();
+            let row = doc.cursor.position.line;
+            let col = doc.cursor.position.col;
+
+            if !self.column_selection.active {
+                self.column_selection.start(row, col);
+            }
+
+            let (mut er, mut ec) = (self.column_selection.end_row, self.column_selection.end_col);
+            let line_count = self.text_cache.lines().count().max(1);
+            if alt_shift_up && er > 0 { er -= 1; }
+            if alt_shift_down && er + 1 < line_count { er += 1; }
+            if alt_shift_left && ec > 0 { ec -= 1; }
+            if alt_shift_right { ec += 1; }
+            self.column_selection.extend(er, ec);
+        }
+    }
+
+    fn handle_column_selection_input(&mut self, ctx: &egui::Context) {
+        if !self.column_selection.active {
+            return;
+        }
+
+        // Handle text input — replace column selection on all lines
+        let text_input: String = ctx.input(|i| {
+            i.events.iter().filter_map(|e| {
+                if let egui::Event::Text(t) = e {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            }).collect()
+        });
+
+        if !text_input.is_empty() {
+            let new_text = self.column_selection.insert_at_selection(&self.text_cache, &text_input);
+            self.text_cache = new_text;
+            self.column_selection.clear();
+            self.sync_buffer_from_cache();
+        }
+
+        // Handle Backspace/Delete — delete column selection
+        let backspace = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. }))
+        });
+        let delete = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Delete, pressed: true, .. }))
+        });
+        if backspace || delete {
+            let new_text = self.column_selection.delete_selection(&self.text_cache);
+            self.text_cache = new_text;
+            self.column_selection.clear();
+            self.sync_buffer_from_cache();
+        }
+
+        // Handle copy (Ctrl+C)
+        let ctrl_c = ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl);
+        if ctrl_c {
+            let copied = self.column_selection.extract_text(&self.text_cache);
+            ctx.copy_text(copied);
+        }
+
+        // Handle cut (Ctrl+X)
+        let ctrl_x = ctx.input(|i| i.key_pressed(egui::Key::X) && i.modifiers.ctrl);
+        if ctrl_x {
+            let copied = self.column_selection.extract_text(&self.text_cache);
+            ctx.copy_text(copied);
+            let new_text = self.column_selection.delete_selection(&self.text_cache);
+            self.text_cache = new_text;
+            self.column_selection.clear();
+            self.sync_buffer_from_cache();
+        }
     }
 }
 
@@ -2025,6 +2112,7 @@ impl eframe::App for NotepadApp {
 
         self.handle_keyboard_shortcuts(ctx);
         self.handle_multi_cursor_input(ctx);
+        self.handle_column_selection_input(ctx);
 
         // Update bracket matching
         {

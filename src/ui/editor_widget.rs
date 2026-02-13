@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, TextFormat, Ui, Vec2};
 use egui::text::LayoutJob;
 
+use crate::editor::column_select::ColumnSelection;
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::search::SearchMatch;
 
@@ -65,6 +66,7 @@ pub fn editor_widget(
     matching_bracket_pos: Option<usize>,
     extra_cursors: &[usize],
     extra_selections: &[(usize, usize)],
+    column_selection: &ColumnSelection,
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
@@ -133,6 +135,7 @@ pub fn editor_widget(
                     }
                     paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
                     paint_extra_selections(ui, &response, text, font_size, extra_selections);
+                    paint_column_selection(ui, &response, font_size, column_selection);
                 });
         });
     } else {
@@ -159,6 +162,7 @@ pub fn editor_widget(
                 }
                 paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
                 paint_extra_selections(ui, &response, text, font_size, extra_selections);
+                paint_column_selection(ui, &response, font_size, column_selection);
             });
     }
 }
@@ -336,6 +340,38 @@ fn paint_extra_selections(
                     painter.rect_filled(rect, 1.0, sel_color);
                 }
             }
+        }
+    }
+}
+
+/// Paint a semi-transparent rectangle overlay for column (rectangular) selection.
+fn paint_column_selection(
+    ui: &Ui,
+    response: &egui::Response,
+    font_size: f32,
+    col_sel: &ColumnSelection,
+) {
+    if !col_sel.active {
+        return;
+    }
+
+    let painter = ui.painter();
+    let text_rect = response.rect;
+    let char_width = font_size * 0.6;
+    let line_height = font_size * 1.4;
+    let text_origin = egui::pos2(text_rect.left() + 4.0, text_rect.top() + 2.0);
+    let sel_color = Color32::from_rgba_premultiplied(80, 140, 220, 80);
+
+    let (min_row, max_row) = col_sel.rows();
+    let (min_col, max_col) = col_sel.cols();
+
+    for row in min_row..=max_row {
+        let y = text_origin.y + (row as f32) * line_height;
+        let x = text_origin.x + (min_col as f32) * char_width;
+        let w = ((max_col - min_col).max(1) as f32) * char_width;
+        let rect = Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, line_height));
+        if rect.intersects(text_rect) {
+            painter.rect_filled(rect, 1.0, sel_color);
         }
     }
 }
