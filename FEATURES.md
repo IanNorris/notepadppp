@@ -1,6 +1,6 @@
 # Notepad+++ Feature List
 
-A comprehensive feature list based on research of Notepad++ and its most popular plugins. Notepad+++ is a from-scratch Rust reimplementation targeting Windows (primary), Linux, and macOS.
+A comprehensive feature list for Notepad+++, a from-scratch Rust text editor targeting Windows (primary), Linux, and macOS.
 
 ---
 

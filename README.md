@@ -1,10 +1,10 @@
 # Notepad+++ 📝
 
-A fast, native text editor for programmers — reimagining Notepad++ in Rust.
+A fast, native text editor for programmers — built from scratch in Rust.
 
 ## Why?
 
-Notepad++ has been repeatedly compromised and is now banned at many companies. Notepad+++ is a clean-room Rust reimplementation that provides the same powerful features with better security, performance, and cross-platform support.
+Most programmer's text editors are either bloated Electron apps or ancient C/C++ codebases with growing security concerns. Notepad+++ is a modern, memory-safe alternative built in Rust with native UI, delivering powerful editing features with strong security and cross-platform support.
 
 ## Features
 
