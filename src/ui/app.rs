@@ -130,6 +130,12 @@ pub struct NotepadApp {
     show_fold_margin: bool,
     /// Cached syntax-highlighted layout job (hash, job)
     layout_cache: Option<(u64, egui::text::LayoutJob)>,
+    /// Text cache for the secondary split panel
+    secondary_text_cache: String,
+    /// Whether the secondary text cache is valid
+    secondary_cache_valid: bool,
+    /// Layout cache for the secondary split panel
+    secondary_layout_cache: Option<(u64, egui::text::LayoutJob)>,
 }
 
 impl NotepadApp {
@@ -138,6 +144,9 @@ impl NotepadApp {
     }
 
     pub fn with_files(_cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
+        // Default to dark theme for a code editor
+        _cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+
         let mut tab_manager = TabManager::new();
         let highlighter = SyntaxHighlighter::new();
         for file in &files {
@@ -231,6 +240,9 @@ impl NotepadApp {
             pending_large_file_info: None,
             show_fold_margin: true,
             layout_cache: None,
+            secondary_text_cache: String::new(),
+            secondary_cache_valid: false,
+            secondary_layout_cache: None,
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -301,6 +313,8 @@ impl NotepadApp {
     fn invalidate_cache(&mut self) {
         self.cache_valid = false;
         self.layout_cache = None;
+        self.secondary_cache_valid = false;
+        self.secondary_layout_cache = None;
     }
 
     // --- Actions ---
@@ -746,8 +760,6 @@ impl NotepadApp {
             self.render_edit_menu(ui);
             self.render_search_menu(ui);
             self.render_view_menu(ui);
-            self.render_encoding_menu(ui);
-            self.render_line_ending_menu(ui);
             self.render_language_menu(ui);
             self.render_tools_menu(ui);
             self.render_settings_menu(ui);
@@ -979,6 +991,57 @@ impl NotepadApp {
                     ui.close_menu();
                 }
             });
+            ui.separator();
+            self.render_encoding_submenu(ui);
+            self.render_line_ending_submenu(ui);
+        });
+    }
+
+    fn render_encoding_submenu(&mut self, ui: &mut Ui) {
+        let current = self.tab_manager.active_document().encoding;
+        ui.menu_button("Encoding", |ui| {
+            let encs = [
+                (Encoding::UTF8, "UTF-8"),
+                (Encoding::UTF8BOM, "UTF-8 BOM"),
+                (Encoding::UTF16LE, "UTF-16 LE"),
+                (Encoding::UTF16BE, "UTF-16 BE"),
+                (Encoding::ASCII, "ANSI"),
+            ];
+            for (enc, label) in &encs {
+                let checked = current == *enc;
+                let text = if checked {
+                    format!("✓ {}", label)
+                } else {
+                    format!("   {}", label)
+                };
+                if ui.button(&text).clicked() {
+                    self.action_set_encoding(*enc);
+                    ui.close_menu();
+                }
+            }
+        });
+    }
+
+    fn render_line_ending_submenu(&mut self, ui: &mut Ui) {
+        let current = self.tab_manager.active_document().line_ending;
+        ui.menu_button("Line Endings", |ui| {
+            let les = [
+                (LineEnding::CRLF, "Windows (CRLF)"),
+                (LineEnding::LF, "Unix (LF)"),
+                (LineEnding::CR, "Mac (CR)"),
+            ];
+            for (le, label) in &les {
+                let checked = current == *le;
+                let text = if checked {
+                    format!("✓ {}", label)
+                } else {
+                    format!("   {}", label)
+                };
+                if ui.button(&text).clicked() {
+                    self.action_set_line_ending(*le);
+                    ui.close_menu();
+                }
+            }
         });
     }
 
@@ -1120,54 +1183,6 @@ impl NotepadApp {
                     ui.close_menu();
                 }
             });
-        });
-    }
-
-    fn render_encoding_menu(&mut self, ui: &mut Ui) {
-        let current = self.tab_manager.active_document().encoding;
-        ui.menu_button("Encoding", |ui| {
-            let encs = [
-                (Encoding::UTF8, "UTF-8"),
-                (Encoding::UTF8BOM, "UTF-8 BOM"),
-                (Encoding::UTF16LE, "UTF-16 LE"),
-                (Encoding::UTF16BE, "UTF-16 BE"),
-                (Encoding::ASCII, "ANSI"),
-            ];
-            for (enc, label) in &encs {
-                let checked = current == *enc;
-                let text = if checked {
-                    format!("✓ {}", label)
-                } else {
-                    format!("   {}", label)
-                };
-                if ui.button(&text).clicked() {
-                    self.action_set_encoding(*enc);
-                    ui.close_menu();
-                }
-            }
-        });
-    }
-
-    fn render_line_ending_menu(&mut self, ui: &mut Ui) {
-        let current = self.tab_manager.active_document().line_ending;
-        ui.menu_button("Line Endings", |ui| {
-            let les = [
-                (LineEnding::CRLF, "Windows (CRLF)"),
-                (LineEnding::LF, "Unix (LF)"),
-                (LineEnding::CR, "Mac (CR)"),
-            ];
-            for (le, label) in &les {
-                let checked = current == *le;
-                let text = if checked {
-                    format!("✓ {}", label)
-                } else {
-                    format!("   {}", label)
-                };
-                if ui.button(&text).clicked() {
-                    self.action_set_line_ending(*le);
-                    ui.close_menu();
-                }
-            }
         });
     }
 
@@ -1677,6 +1692,11 @@ impl NotepadApp {
                 ui.separator();
             }
 
+            // "+" button to create a new tab
+            if ui.small_button("+").on_hover_text("New Tab").clicked() {
+                self.action_new();
+            }
+
             // Process deferred actions
             if let Some(idx) = switch_idx {
                 self.tab_manager.set_active(idx);
@@ -1790,6 +1810,111 @@ impl NotepadApp {
             ContextMenuAction::None => {}
         }
         self.sync_buffer_from_cache();
+    }
+
+    /// Render the tab bar for the secondary split panel.
+    fn render_secondary_tab_bar(&mut self, ui: &mut Ui) {
+        let tab_count = self.tab_manager.tab_count();
+        let second_idx = self.split_view.second_tab_index.unwrap_or(0);
+
+        ui.horizontal_wrapped(|ui| {
+            let tab_info: Vec<(usize, String)> = (0..tab_count)
+                .map(|i| (i, self.tab_manager.get_tab_title(i)))
+                .collect();
+
+            for (i, title) in &tab_info {
+                let is_active = *i == second_idx;
+                let button_text = if is_active {
+                    RichText::new(title).strong()
+                } else {
+                    RichText::new(title)
+                };
+                if ui.selectable_label(is_active, button_text).clicked() {
+                    self.split_view.second_tab_index = Some(*i);
+                    self.secondary_cache_valid = false;
+                    self.secondary_layout_cache = None;
+                }
+                ui.separator();
+            }
+
+            if ui.small_button("+").on_hover_text("New Tab").clicked() {
+                self.tab_manager.new_tab();
+                let new_idx = self.tab_manager.tab_count() - 1;
+                self.split_view.second_tab_index = Some(new_idx);
+                self.secondary_cache_valid = false;
+                self.secondary_layout_cache = None;
+            }
+        });
+    }
+
+    /// Render the editor for the secondary split panel.
+    fn render_secondary_editor(&mut self, ui: &mut Ui) {
+        let second_idx = self.split_view.second_tab_index.unwrap_or(0);
+
+        // Sync secondary text cache
+        if !self.secondary_cache_valid {
+            self.secondary_text_cache = self.tab_manager
+                .get_document(second_idx)
+                .map(|d| d.buffer.text())
+                .unwrap_or_default();
+            self.secondary_cache_valid = true;
+        }
+
+        let ext = self.tab_manager
+            .get_document(second_idx)
+            .and_then(|d| d.path.as_ref())
+            .map(|p| SyntaxHighlighter::extension_from_path(p))
+            .unwrap_or_default();
+
+        let bookmarks: Vec<usize> = self.tab_manager
+            .get_document(second_idx)
+            .map(|d| d.bookmarks.all_bookmarks())
+            .unwrap_or_default();
+
+        let empty_cursors: Vec<usize> = Vec::new();
+        let empty_selections: Vec<(usize, usize)> = Vec::new();
+        let empty_col_sel = ColumnSelection::new();
+
+        let editor_output = editor_widget(
+            ui,
+            &mut self.secondary_text_cache,
+            self.font_size,
+            self.show_line_numbers,
+            self.word_wrap,
+            &[],
+            None,
+            &self.syntax_highlighter,
+            &ext,
+            &bookmarks,
+            None,
+            &empty_cursors,
+            &empty_selections,
+            &empty_col_sel,
+            &mut self.secondary_layout_cache,
+        );
+
+        // Sync secondary cursor
+        if let Some(doc) = self.tab_manager.get_document_mut(second_idx) {
+            doc.cursor.position.line = editor_output.cursor_line;
+            doc.cursor.position.col = editor_output.cursor_col;
+        }
+
+        // Write edits back to buffer
+        let current = self.tab_manager
+            .get_document(second_idx)
+            .map(|d| d.buffer.text())
+            .unwrap_or_default();
+        if self.secondary_text_cache != current {
+            if let Some(doc) = self.tab_manager.get_document_mut(second_idx) {
+                let len = doc.buffer.len_bytes();
+                if len > 0 {
+                    doc.buffer.delete(0, len);
+                }
+                if !self.secondary_text_cache.is_empty() {
+                    doc.buffer.insert(0, &self.secondary_text_cache);
+                }
+            }
+        }
     }
 
     fn render_minimap(&self, ui: &mut Ui) {
@@ -2691,9 +2816,12 @@ impl eframe::App for NotepadApp {
             self.render_menu_bar(ui);
         });
 
-        egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
-            self.render_tab_bar(ui);
-        });
+        // Tab bar (hidden in split view since panels have their own)
+        if !self.split_view.enabled {
+            egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+                self.render_tab_bar(ui);
+            });
+        }
 
         // Search bar panel (below tabs, above editor)
         if self.show_search_bar {
@@ -2855,8 +2983,7 @@ impl eframe::App for NotepadApp {
                     });
                 });
             } else if self.split_view.enabled {
-                // Split view mode
-                let second_idx = self.split_view.second_tab_index.unwrap_or(0);
+                // Split view mode with per-panel tab bars
                 let orientation = self.split_view.orientation;
                 let ratio = self.split_view.ratio;
                 let available = ui.available_rect_before_wrap();
@@ -2869,14 +2996,23 @@ impl eframe::App for NotepadApp {
                         let right_width = (total_width - left_width - divider_width).max(50.0);
 
                         ui.horizontal(|ui| {
+                            // Left panel: primary tab bar + editor
                             ui.allocate_ui(egui::vec2(left_width, available.height()), |ui| {
-                                self.render_editor(ui);
+                                ui.vertical(|ui| {
+                                    self.render_tab_bar(ui);
+                                    ui.separator();
+                                    self.render_editor(ui);
+                                });
                             });
 
+                            // Draggable divider with resize cursor
                             let (rect, response) = ui.allocate_exact_size(
                                 egui::vec2(divider_width, available.height()),
                                 egui::Sense::drag(),
                             );
+                            if response.hovered() || response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                            }
                             ui.painter().rect_filled(
                                 rect,
                                 0.0,
@@ -2892,18 +3028,13 @@ impl eframe::App for NotepadApp {
                                     .clamp(0.1, 0.9);
                             }
 
+                            // Right panel: secondary tab bar + editor
                             ui.allocate_ui(egui::vec2(right_width, available.height()), |ui| {
-                                // Render second panel with the second tab
-                                let second_text = self.tab_manager
-                                    .get_document(second_idx)
-                                    .map(|d| d.buffer.text())
-                                    .unwrap_or_default();
-                                let mut text = second_text;
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut text)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                );
+                                ui.vertical(|ui| {
+                                    self.render_secondary_tab_bar(ui);
+                                    ui.separator();
+                                    self.render_secondary_editor(ui);
+                                });
                             });
                         });
                     }
@@ -2913,14 +3044,23 @@ impl eframe::App for NotepadApp {
                         let bottom_height = (total_height - top_height - divider_width).max(50.0);
 
                         ui.vertical(|ui| {
+                            // Top panel: primary tab bar + editor
                             ui.allocate_ui(egui::vec2(available.width(), top_height), |ui| {
-                                self.render_editor(ui);
+                                ui.vertical(|ui| {
+                                    self.render_tab_bar(ui);
+                                    ui.separator();
+                                    self.render_editor(ui);
+                                });
                             });
 
+                            // Draggable divider with resize cursor
                             let (rect, response) = ui.allocate_exact_size(
                                 egui::vec2(available.width(), divider_width),
                                 egui::Sense::drag(),
                             );
+                            if response.hovered() || response.dragged() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                            }
                             ui.painter().rect_filled(
                                 rect,
                                 0.0,
@@ -2936,17 +3076,13 @@ impl eframe::App for NotepadApp {
                                     .clamp(0.1, 0.9);
                             }
 
+                            // Bottom panel: secondary tab bar + editor
                             ui.allocate_ui(egui::vec2(available.width(), bottom_height), |ui| {
-                                let second_text = self.tab_manager
-                                    .get_document(second_idx)
-                                    .map(|d| d.buffer.text())
-                                    .unwrap_or_default();
-                                let mut text = second_text;
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut text)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                );
+                                ui.vertical(|ui| {
+                                    self.render_secondary_tab_bar(ui);
+                                    ui.separator();
+                                    self.render_secondary_editor(ui);
+                                });
                             });
                         });
                     }
