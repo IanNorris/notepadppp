@@ -16,7 +16,7 @@ use crate::tools::csv_viewer::CsvData;
 use crate::tools::diff_tool::DiffResult;
 use crate::tools::hex_viewer::HexView;
 
-use super::editor_widget::{editor_widget, ContextMenuAction};
+use super::editor_widget::{editor_widget, ContextMenuAction, EditorWidgetOutput};
 use super::search_dialog::{self, SearchAction, SearchBarState};
 use super::split_view::{SplitOrientation, SplitView};
 
@@ -128,6 +128,8 @@ pub struct NotepadApp {
     pending_large_file_info: Option<crate::io::large_file::LargeFileInfo>,
     /// Whether to show the fold margin (gutter indicators)
     show_fold_margin: bool,
+    /// Cached syntax-highlighted layout job (hash, job)
+    layout_cache: Option<(u64, egui::text::LayoutJob)>,
 }
 
 impl NotepadApp {
@@ -228,6 +230,7 @@ impl NotepadApp {
             pending_large_file: None,
             pending_large_file_info: None,
             show_fold_margin: true,
+            layout_cache: None,
         };
 
         // Auto-restore session if enabled and no files were specified on command line
@@ -297,6 +300,7 @@ impl NotepadApp {
 
     fn invalidate_cache(&mut self) {
         self.cache_valid = false;
+        self.layout_cache = None;
     }
 
     // --- Actions ---
@@ -1718,7 +1722,11 @@ impl NotepadApp {
         };
         let minimap_allowed = self.show_minimap && !large_info.minimap_disabled;
 
-        let mut ctx_action = ContextMenuAction::None;
+        let mut editor_output = EditorWidgetOutput {
+            ctx_action: ContextMenuAction::None,
+            cursor_line: 0,
+            cursor_col: 0,
+        };
         if minimap_allowed {
             let available = ui.available_size();
             let minimap_width = 120.0;
@@ -1726,7 +1734,7 @@ impl NotepadApp {
 
             ui.horizontal_top(|ui| {
                 ui.allocate_ui(egui::vec2(editor_width, available.y), |ui| {
-                    ctx_action = editor_widget(
+                    editor_output = editor_widget(
                         ui,
                         &mut self.text_cache,
                         self.font_size,
@@ -1741,6 +1749,7 @@ impl NotepadApp {
                         &extra_cursor_offsets,
                         &extra_selections,
                         &self.column_selection,
+                        &mut self.layout_cache,
                     );
                 });
 
@@ -1750,7 +1759,7 @@ impl NotepadApp {
                 });
             });
         } else {
-            ctx_action = editor_widget(
+            editor_output = editor_widget(
                 ui,
                 &mut self.text_cache,
                 self.font_size,
@@ -1765,9 +1774,16 @@ impl NotepadApp {
                 &extra_cursor_offsets,
                 &extra_selections,
                 &self.column_selection,
+                &mut self.layout_cache,
             );
         }
-        match ctx_action {
+
+        // Sync cursor position from the editor widget
+        let doc = self.tab_manager.active_document_mut();
+        doc.cursor.position.line = editor_output.cursor_line;
+        doc.cursor.position.col = editor_output.cursor_col;
+
+        match editor_output.ctx_action {
             ContextMenuAction::ToggleComment => self.line_op_toggle_comment(),
             ContextMenuAction::Uppercase => self.case_upper(),
             ContextMenuAction::Lowercase => self.case_lower(),

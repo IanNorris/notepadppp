@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, TextFormat, Ui, Vec2};
+use egui::{self, Color32, FontId, Layout, Rect, RichText, ScrollArea, TextEdit, TextFormat, Ui, Vec2};
 use egui::text::LayoutJob;
 
 use crate::editor::column_select::ColumnSelection;
@@ -13,6 +13,13 @@ pub enum ContextMenuAction {
     ToggleComment,
     Uppercase,
     Lowercase,
+}
+
+/// Output returned from `editor_widget()` including cursor information.
+pub struct EditorWidgetOutput {
+    pub ctx_action: ContextMenuAction,
+    pub cursor_line: usize,
+    pub cursor_col: usize,
 }
 
 /// Build a LayoutJob with syntax-highlighted spans for the given text.
@@ -76,18 +83,50 @@ pub fn editor_widget(
     extra_cursors: &[usize],
     extra_selections: &[(usize, usize)],
     column_selection: &ColumnSelection,
-) -> ContextMenuAction {
+    layout_cache: &mut Option<(u64, LayoutJob)>,
+) -> EditorWidgetOutput {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
     let default_color = ui.visuals().text_color();
     let mut ctx_action = ContextMenuAction::None;
+    let mut cursor_line: usize = 0;
+    let mut cursor_col: usize = 0;
 
     let ext = file_extension.to_string();
     let hl = highlighter;
     let f = font.clone();
     let dc = default_color;
 
+    // Compute a content hash for layout caching
+    let content_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.len().hash(&mut hasher);
+        ext.hash(&mut hasher);
+        // Hash a sample of the text for fast change detection
+        let sample_end = 1000.min(text.len());
+        text.get(..sample_end).hash(&mut hasher);
+        if text.len() > 1000 {
+            let tail_start = text.len().saturating_sub(1000);
+            text.get(tail_start..).hash(&mut hasher);
+        }
+        hasher.finish()
+    };
+
+    // Regenerate layout cache if content changed
+    if layout_cache.as_ref().map_or(true, |(h, _)| *h != content_hash) {
+        let job = highlight_text(&text, &ext, hl, f.clone(), dc);
+        *layout_cache = Some((content_hash, job));
+    }
+
+    let cached_job = layout_cache.as_ref().map(|(_, job)| job.clone());
+    let text_len = text.len();
     let mut layouter = |ui: &egui::Ui, s: &str, _wrap_width: f32| {
+        if let Some(ref job) = cached_job {
+            if s.len() == text_len {
+                return ui.fonts(|fonts| fonts.layout_job(job.clone()));
+            }
+        }
         let job = highlight_text(s, &ext, hl, f.clone(), dc);
         ui.fonts(|fonts| fonts.layout_job(job))
     };
@@ -135,10 +174,17 @@ pub fn editor_widget(
                     if !word_wrap {
                         editor = editor.desired_rows(1);
                     }
-                    let response = ui.add_sized(
+                    let te_output = ui.allocate_ui_with_layout(
                         Vec2::new(ui.available_width(), ui.available_height()),
-                        editor,
-                    );
+                        Layout::centered_and_justified(ui.layout().main_dir()),
+                        |ui| editor.show(ui),
+                    ).inner;
+                    let response = te_output.response;
+                    if let Some(cursor_range) = te_output.cursor_range {
+                        let pcursor = cursor_range.primary.pcursor;
+                        cursor_line = pcursor.paragraph;
+                        cursor_col = pcursor.offset;
+                    }
                     paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
                     if let Some(match_pos) = matching_bracket_pos {
                         paint_bracket_highlight(ui, &response, text, font_size, match_pos);
@@ -163,10 +209,17 @@ pub fn editor_widget(
                 if !word_wrap {
                     editor = editor.desired_rows(1);
                 }
-                let response = ui.add_sized(
+                let te_output = ui.allocate_ui_with_layout(
                     Vec2::new(ui.available_width(), ui.available_height()),
-                    editor,
-                );
+                    Layout::centered_and_justified(ui.layout().main_dir()),
+                    |ui| editor.show(ui),
+                ).inner;
+                let response = te_output.response;
+                if let Some(cursor_range) = te_output.cursor_range {
+                    let pcursor = cursor_range.primary.pcursor;
+                    cursor_line = pcursor.paragraph;
+                    cursor_col = pcursor.offset;
+                }
                 paint_search_highlights(ui, &response, text, font_size, search_matches, current_match_index);
                 if let Some(match_pos) = matching_bracket_pos {
                     paint_bracket_highlight(ui, &response, text, font_size, match_pos);
@@ -178,7 +231,11 @@ pub fn editor_widget(
             });
     }
 
-    ctx_action
+    EditorWidgetOutput {
+        ctx_action,
+        cursor_line,
+        cursor_col,
+    }
 }
 
 /// Paint colored rectangles over search match positions in the editor.
