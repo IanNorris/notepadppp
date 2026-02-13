@@ -12,6 +12,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, EnableWindow};
+use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragQueryFileW, DragFinish, HDROP};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use scintilla::*;
@@ -302,6 +303,9 @@ pub fn run() {
 
         // Create child controls
         create_controls(hwnd, hinstance);
+
+        // Accept drag-and-drop files
+        DragAcceptFiles(hwnd, TRUE);
 
         // Set initial menu check marks
         let menu = GetMenu(hwnd);
@@ -720,6 +724,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             DestroyWindow(hwnd);
             0
         }
+        WM_DROPFILES => {
+            on_drop_files(wparam as HDROP);
+            0
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -958,6 +966,20 @@ unsafe fn on_notify(nmhdr: &NMHDR) {
         let scn = &*(nmhdr as *const NMHDR as *const SCNotification);
         s.macro_buffer.push((scn.message as u32, scn.w_param, scn.l_param));
     }
+}
+
+unsafe fn on_drop_files(hdrop: HDROP) {
+    let count = DragQueryFileW(hdrop, 0xFFFFFFFF, std::ptr::null_mut(), 0);
+    for i in 0..count {
+        let len = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0);
+        let mut buf = vec![0u16; (len + 1) as usize];
+        DragQueryFileW(hdrop, i, buf.as_mut_ptr(), buf.len() as u32);
+        let path = wchar_to_string(&buf);
+        if !path.is_empty() {
+            open_file_in_tab(&path);
+        }
+    }
+    DragFinish(hdrop);
 }
 
 // ── Tab management ──
