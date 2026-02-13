@@ -2,6 +2,7 @@ use egui::{self, Align, Layout, RichText, Ui};
 use std::path::PathBuf;
 
 use crate::editor::document::{Encoding, LineEnding};
+use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
@@ -35,6 +36,10 @@ pub struct NotepadApp {
     show_search_results: bool,
     search_results_matches: Vec<SearchMatch>,
     current_match_index: Option<usize>,
+    // Syntax highlighting
+    syntax_highlighter: SyntaxHighlighter,
+    /// Cached file extension for the active document (without dot)
+    file_extension: String,
 }
 
 impl NotepadApp {
@@ -44,15 +49,28 @@ impl NotepadApp {
 
     pub fn with_files(_cc: &eframe::CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         let mut tab_manager = TabManager::new();
+        let highlighter = SyntaxHighlighter::new();
         for file in &files {
             if file.exists() {
-                let _ = tab_manager.open_file(file.clone());
+                if let Ok(idx) = tab_manager.open_file(file.clone()) {
+                    // Auto-detect language from extension
+                    let lang = SyntaxHighlighter::detect_language(file);
+                    if let Some(doc) = tab_manager.get_document_mut(idx) {
+                        doc.language = lang;
+                    }
+                }
             }
         }
         // If files were opened, close the default empty tab
         if !files.is_empty() && tab_manager.tab_count() > 1 {
             tab_manager.close_tab(0);
         }
+        let ext = tab_manager
+            .active_document()
+            .path
+            .as_ref()
+            .map(|p| SyntaxHighlighter::extension_from_path(p))
+            .unwrap_or_default();
         let text = tab_manager.active_document().buffer.text();
         Self {
             tab_manager,
@@ -74,6 +92,8 @@ impl NotepadApp {
             show_search_results: false,
             search_results_matches: Vec::new(),
             current_match_index: None,
+            syntax_highlighter: highlighter,
+            file_extension: ext,
         }
     }
 
@@ -99,6 +119,13 @@ impl NotepadApp {
         let idx = self.tab_manager.active_index();
         if !self.cache_valid || self.cache_tab_index != idx {
             self.text_cache = self.tab_manager.active_document().buffer.text();
+            self.file_extension = self
+                .tab_manager
+                .active_document()
+                .path
+                .as_ref()
+                .map(|p| SyntaxHighlighter::extension_from_path(p))
+                .unwrap_or_default();
             self.cache_valid = true;
             self.cache_tab_index = idx;
         }
@@ -138,7 +165,14 @@ impl NotepadApp {
 
     fn open_file_path(&mut self, path: PathBuf) {
         match self.tab_manager.open_file(path.clone()) {
-            Ok(_) => {
+            Ok(idx) => {
+                // Auto-detect language from extension
+                let lang = SyntaxHighlighter::detect_language(&path);
+                let ext = SyntaxHighlighter::extension_from_path(&path);
+                if let Some(doc) = self.tab_manager.get_document_mut(idx) {
+                    doc.language = lang;
+                }
+                self.file_extension = ext;
                 self.recent_files.add(path);
                 self.save_recent_files();
                 self.invalidate_cache();
@@ -168,6 +202,11 @@ impl NotepadApp {
             if let Err(e) = self.tab_manager.save_tab_as(idx, path.clone()) {
                 log::error!("Failed to save as: {}", e);
             } else {
+                // Detect language from new path
+                let lang = SyntaxHighlighter::detect_language(&path);
+                let ext = SyntaxHighlighter::extension_from_path(&path);
+                self.tab_manager.active_document_mut().language = lang;
+                self.file_extension = ext;
                 self.recent_files.add(path);
                 self.save_recent_files();
                 self.invalidate_cache();
@@ -324,6 +363,7 @@ impl NotepadApp {
             self.render_view_menu(ui);
             self.render_encoding_menu(ui);
             self.render_line_ending_menu(ui);
+            self.render_language_menu(ui);
             self.render_help_menu(ui);
         });
     }
@@ -551,6 +591,53 @@ impl NotepadApp {
         });
     }
 
+    fn render_language_menu(&mut self, ui: &mut Ui) {
+        let current_lang = self.tab_manager.active_document().language.clone();
+        ui.menu_button("Language", |ui| {
+            let mut languages = self.syntax_highlighter.list_languages();
+            languages.sort();
+            languages.dedup();
+            // Put "Plain Text" first
+            if let Some(pos) = languages.iter().position(|l| l == "Plain Text") {
+                languages.remove(pos);
+            }
+            languages.insert(0, "Plain Text".to_string());
+
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    for lang in &languages {
+                        let checked = current_lang == *lang;
+                        let text = if checked {
+                            format!("✓ {}", lang)
+                        } else {
+                            format!("   {}", lang)
+                        };
+                        if ui.button(&text).clicked() {
+                            self.tab_manager.active_document_mut().language = lang.clone();
+                            // Find an extension for this language to enable highlighting
+                            if lang == "Plain Text" {
+                                self.file_extension = String::new();
+                            } else if let Some(syntax) = self
+                                .syntax_highlighter
+                                .syntax_set()
+                                .syntaxes()
+                                .iter()
+                                .find(|s| s.name == *lang)
+                            {
+                                self.file_extension = syntax
+                                    .file_extensions
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_default();
+                            }
+                            ui.close_menu();
+                        }
+                    }
+                });
+        });
+    }
+
     fn render_help_menu(&mut self, ui: &mut Ui) {
         ui.menu_button("Help", |ui| {
             if ui.button("About").clicked() {
@@ -661,6 +748,8 @@ impl NotepadApp {
             self.word_wrap,
             &self.search_results_matches,
             self.current_match_index,
+            &self.syntax_highlighter,
+            &self.file_extension,
         );
         self.sync_buffer_from_cache();
     }

@@ -1,9 +1,55 @@
-use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, Ui, Vec2};
+use egui::{self, Color32, FontId, Rect, RichText, ScrollArea, TextEdit, TextFormat, Ui, Vec2};
+use egui::text::LayoutJob;
 
+use crate::editor::syntax::SyntaxHighlighter;
 use crate::search::SearchMatch;
 
-/// Renders the editor widget with optional line numbers, word wrap, and search highlights.
-/// Operates on a `&mut String` that is synced with the active document's buffer.
+/// Build a LayoutJob with syntax-highlighted spans for the given text.
+fn highlight_text(
+    text: &str,
+    extension: &str,
+    highlighter: &SyntaxHighlighter,
+    font: FontId,
+    default_color: Color32,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+
+    if extension.is_empty() {
+        // Plain text — single span
+        job.append(
+            text,
+            0.0,
+            TextFormat {
+                font_id: font,
+                color: default_color,
+                ..Default::default()
+            },
+        );
+        return job;
+    }
+
+    for line in text.split_inclusive('\n') {
+        let spans = highlighter.highlight_line(line, extension);
+        for (style, segment) in spans {
+            let fg = style.foreground;
+            let color = Color32::from_rgb(fg.r, fg.g, fg.b);
+            job.append(
+                &segment,
+                0.0,
+                TextFormat {
+                    font_id: font.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    // Handle text that doesn't end with newline — split_inclusive covers this fine.
+    job
+}
+
+/// Renders the editor widget with optional line numbers, word wrap, search highlights, and syntax highlighting.
 pub fn editor_widget(
     ui: &mut Ui,
     text: &mut String,
@@ -12,9 +58,22 @@ pub fn editor_widget(
     word_wrap: bool,
     search_matches: &[SearchMatch],
     current_match_index: Option<usize>,
+    highlighter: &SyntaxHighlighter,
+    file_extension: &str,
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
+    let default_color = ui.visuals().text_color();
+
+    let ext = file_extension.to_string();
+    let hl = highlighter;
+    let f = font.clone();
+    let dc = default_color;
+
+    let mut layouter = |ui: &egui::Ui, s: &str, _wrap_width: f32| {
+        let job = highlight_text(s, &ext, hl, f.clone(), dc);
+        ui.fonts(|fonts| fonts.layout_job(job))
+    };
 
     if show_line_numbers {
         let line_count = text.lines().count().max(1);
@@ -52,7 +111,8 @@ pub fn editor_widget(
                         .font(font.clone())
                         .desired_width(f32::INFINITY)
                         .code_editor()
-                        .lock_focus(true);
+                        .lock_focus(true)
+                        .layouter(&mut layouter);
                     if !word_wrap {
                         editor = editor.desired_rows(1);
                     }
@@ -72,7 +132,8 @@ pub fn editor_widget(
                     .font(font.clone())
                     .desired_width(f32::INFINITY)
                     .code_editor()
-                    .lock_focus(true);
+                    .lock_focus(true)
+                    .layouter(&mut layouter);
                 if !word_wrap {
                     editor = editor.desired_rows(1);
                 }
