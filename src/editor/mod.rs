@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod cursor;
 pub mod document;
+pub mod macros;
 pub mod syntax;
 pub mod tab_manager;

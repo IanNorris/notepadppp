@@ -2,14 +2,16 @@ use egui::{self, Align, Color32, Layout, RichText, Ui};
 use std::path::PathBuf;
 
 use crate::editor::document::{Encoding, LineEnding};
+use crate::editor::macros::MacroRecorder;
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
 use crate::io::session;
 use crate::search::{SearchEngine, SearchHistory, SearchMatch};
-use crate::tools::{csv_viewer, diff_tool, json_tools, markdown_viewer, mime_tools};
+use crate::tools::{csv_viewer, diff_tool, hex_viewer, json_tools, markdown_viewer, mime_tools};
 use crate::tools::csv_viewer::CsvData;
 use crate::tools::diff_tool::DiffResult;
+use crate::tools::hex_viewer::HexView;
 
 use super::editor_widget::editor_widget;
 use super::search_dialog::{self, SearchAction, SearchBarState};
@@ -59,6 +61,18 @@ pub struct NotepadApp {
     diff_result: Option<DiffResult>,
     /// Whether to auto-restore session on startup
     auto_restore_session: bool,
+    /// Whether the hex viewer is enabled for current tab
+    show_hex_viewer: bool,
+    /// Hex view data for the current tab
+    hex_view: Option<HexView>,
+    /// Macro recorder
+    macro_recorder: MacroRecorder,
+    /// Last recorded macro (for quick replay)
+    last_macro: Option<crate::editor::macros::Macro>,
+    /// Whether to show the "play N times" dialog
+    show_macro_repeat_dialog: bool,
+    /// Repeat count for macro playback
+    macro_repeat_count: String,
 }
 
 impl NotepadApp {
@@ -120,6 +134,12 @@ impl NotepadApp {
             csv_delimiter: ',',
             diff_result: None,
             auto_restore_session: false,
+            show_hex_viewer: false,
+            hex_view: None,
+            macro_recorder: MacroRecorder::new(),
+            last_macro: None,
+            show_macro_repeat_dialog: false,
+            macro_repeat_count: String::from("1"),
         }
     }
 
@@ -806,6 +826,67 @@ impl NotepadApp {
                 self.action_compare_files();
                 ui.close_menu();
             }
+            ui.separator();
+            let hex_label = if self.show_hex_viewer {
+                "✓ Hex Viewer"
+            } else {
+                "  Hex Viewer"
+            };
+            if ui.button(hex_label).clicked() {
+                self.show_hex_viewer = !self.show_hex_viewer;
+                if self.show_hex_viewer {
+                    self.sync_cache_from_buffer();
+                    self.hex_view = Some(HexView::from_text(&self.text_cache));
+                } else {
+                    self.hex_view = None;
+                }
+                ui.close_menu();
+            }
+        });
+
+        // Macro menu
+        ui.menu_button("Macro", |ui| {
+            let is_recording = self.macro_recorder.is_recording();
+            let rec_label = if is_recording {
+                "Stop Recording  (Ctrl+Shift+R)"
+            } else {
+                "Start Recording  (Ctrl+Shift+R)"
+            };
+            if ui.button(rec_label).clicked() {
+                self.action_toggle_macro_recording();
+                ui.close_menu();
+            }
+            if ui.button("Play Last Macro  (Ctrl+Shift+P)").clicked() {
+                self.action_play_last_macro();
+                ui.close_menu();
+            }
+            if ui.button("Play Multiple Times...").clicked() {
+                self.show_macro_repeat_dialog = true;
+                ui.close_menu();
+            }
+            ui.separator();
+            let saved = self.macro_recorder.saved_macros().to_vec();
+            if saved.is_empty() {
+                ui.label("  (no saved macros)");
+            } else {
+                ui.menu_button("Saved Macros", |ui| {
+                    for (i, m) in saved.iter().enumerate() {
+                        if ui.button(&m.name).clicked() {
+                            let m = m.clone();
+                            let doc = self.tab_manager.active_document_mut();
+                            MacroRecorder::play_macro(&m, doc);
+                            self.invalidate_cache();
+                            ui.close_menu();
+                            let _ = i; // used above
+                        }
+                    }
+                });
+            }
+            ui.separator();
+            if ui.button("Manage Macros...").clicked() {
+                // Simple management: delete all for now
+                ui.close_menu();
+            }
         });
     }
 
@@ -885,6 +966,23 @@ impl NotepadApp {
                 }
                 Err(e) => log::error!("Failed to read file for comparison: {}", e),
             }
+        }
+    }
+
+    fn action_toggle_macro_recording(&mut self) {
+        if self.macro_recorder.is_recording() {
+            let m = self.macro_recorder.stop_recording("Macro");
+            self.last_macro = Some(m);
+        } else {
+            self.macro_recorder.start_recording();
+        }
+    }
+
+    fn action_play_last_macro(&mut self) {
+        if let Some(ref m) = self.last_macro.clone() {
+            let doc = self.tab_manager.active_document_mut();
+            MacroRecorder::play_macro(m, doc);
+            self.invalidate_cache();
         }
     }
 
@@ -1131,7 +1229,17 @@ impl NotepadApp {
         let tab_count = self.tab_manager.tab_count();
 
         ui.horizontal(|ui| {
-            ui.label(format!("Ln {}, Col {}", line, col));
+            if self.macro_recorder.is_recording() {
+                ui.label(RichText::new("● REC").color(Color32::from_rgb(220, 60, 60)).strong());
+                ui.separator();
+            }
+            if self.show_hex_viewer {
+                if let Some(ref hv) = self.hex_view {
+                    ui.label(format!("HEX | {} bytes | offset 0x{:08X}", hv.bytes.len(), hv.cursor_offset));
+                }
+            } else {
+                ui.label(format!("Ln {}, Col {}", line, col));
+            }
             ui.separator();
             ui.label(encoding_str);
             ui.separator();
@@ -1286,6 +1394,8 @@ impl NotepadApp {
         let f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && !i.modifiers.shift);
         let shift_f3 = ctx.input(|i| i.key_pressed(egui::Key::F3) && i.modifiers.shift);
         let ctrl_shift_j = ctx.input(|i| i.key_pressed(egui::Key::J) && i.modifiers.ctrl && i.modifiers.shift);
+        let ctrl_shift_r = ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl && i.modifiers.shift);
+        let ctrl_shift_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1306,6 +1416,8 @@ impl NotepadApp {
         if f3 { self.action_find_next(); }
         if shift_f3 { self.action_find_prev(); }
         if ctrl_shift_j { self.action_json_format(); }
+        if ctrl_shift_r { self.action_toggle_macro_recording(); }
+        if ctrl_shift_p { self.action_play_last_macro(); }
     }
 }
 
@@ -1407,7 +1519,12 @@ impl eframe::App for NotepadApp {
                 })
                 .unwrap_or(false);
 
-            if self.show_csv_viewer && is_csv {
+            if self.show_hex_viewer {
+                // Hex viewer mode
+                if let Some(ref mut hv) = self.hex_view {
+                    hex_viewer::render_hex(ui, hv);
+                }
+            } else if self.show_csv_viewer && is_csv {
                 // CSV viewer mode
                 ui.horizontal(|ui| {
                     ui.label("Delimiter:");
@@ -1556,5 +1673,33 @@ impl eframe::App for NotepadApp {
             // Diff panel at the bottom
             self.render_diff_panel(ui);
         });
+
+        // Macro repeat dialog
+        if self.show_macro_repeat_dialog {
+            egui::Window::new("Play Macro Multiple Times")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Repeat count:");
+                        ui.text_edit_singleline(&mut self.macro_repeat_count);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Play").clicked() {
+                            if let Ok(n) = self.macro_repeat_count.parse::<usize>() {
+                                if let Some(ref m) = self.last_macro.clone() {
+                                    let doc = self.tab_manager.active_document_mut();
+                                    MacroRecorder::play_macro_n_times(m, doc, n);
+                                    self.invalidate_cache();
+                                }
+                            }
+                            self.show_macro_repeat_dialog = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.show_macro_repeat_dialog = false;
+                        }
+                    });
+                });
+        }
     }
 }
