@@ -6,5 +6,6 @@ pub mod document;
 pub mod function_list;
 pub mod indent;
 pub mod macros;
+pub mod multi_cursor;
 pub mod syntax;
 pub mod tab_manager;

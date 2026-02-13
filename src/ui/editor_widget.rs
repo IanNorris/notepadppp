@@ -63,6 +63,8 @@ pub fn editor_widget(
     file_extension: &str,
     bookmarked_lines: &[usize],
     matching_bracket_pos: Option<usize>,
+    extra_cursors: &[usize],
+    extra_selections: &[(usize, usize)],
 ) {
     let font = FontId::monospace(font_size);
     let available = ui.available_size();
@@ -129,6 +131,8 @@ pub fn editor_widget(
                     if let Some(match_pos) = matching_bracket_pos {
                         paint_bracket_highlight(ui, &response, text, font_size, match_pos);
                     }
+                    paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
+                    paint_extra_selections(ui, &response, text, font_size, extra_selections);
                 });
         });
     } else {
@@ -153,6 +157,8 @@ pub fn editor_widget(
                 if let Some(match_pos) = matching_bracket_pos {
                     paint_bracket_highlight(ui, &response, text, font_size, match_pos);
                 }
+                paint_extra_cursors(ui, &response, text, font_size, extra_cursors);
+                paint_extra_selections(ui, &response, text, font_size, extra_selections);
             });
     }
 }
@@ -239,5 +245,97 @@ fn paint_bracket_highlight(
 
     if rect.intersects(text_rect) {
         painter.rect_stroke(rect, 2.0, egui::Stroke::new(2.0, Color32::from_rgb(100, 180, 255)), egui::StrokeKind::Outside);
+    }
+}
+
+/// Paint colored cursor lines at each extra cursor byte position.
+fn paint_extra_cursors(
+    ui: &Ui,
+    response: &egui::Response,
+    text: &str,
+    font_size: f32,
+    cursor_offsets: &[usize],
+) {
+    if cursor_offsets.is_empty() {
+        return;
+    }
+
+    let painter = ui.painter();
+    let text_rect = response.rect;
+    let char_width = font_size * 0.6;
+    let line_height = font_size * 1.4;
+    let text_origin = egui::pos2(text_rect.left() + 4.0, text_rect.top() + 2.0);
+    let cursor_color = Color32::from_rgba_premultiplied(255, 200, 50, 200);
+
+    for &byte_pos in cursor_offsets {
+        let clamped = byte_pos.min(text.len());
+        let line = text[..clamped].matches('\n').count();
+        let col = col_in_line(text, clamped);
+        let y = text_origin.y + (line as f32) * line_height;
+        let x = text_origin.x + (col as f32) * char_width;
+
+        let cursor_rect = Rect::from_min_size(egui::pos2(x - 1.0, y), egui::vec2(2.0, line_height));
+        if cursor_rect.intersects(text_rect) {
+            painter.rect_filled(cursor_rect, 0.0, cursor_color);
+        }
+    }
+}
+
+/// Paint colored rectangles over extra cursor selections.
+fn paint_extra_selections(
+    ui: &Ui,
+    response: &egui::Response,
+    text: &str,
+    font_size: f32,
+    selections: &[(usize, usize)],
+) {
+    if selections.is_empty() {
+        return;
+    }
+
+    let painter = ui.painter();
+    let text_rect = response.rect;
+    let char_width = font_size * 0.6;
+    let line_height = font_size * 1.4;
+    let text_origin = egui::pos2(text_rect.left() + 4.0, text_rect.top() + 2.0);
+    let sel_color = Color32::from_rgba_premultiplied(100, 160, 255, 60);
+
+    for &(start, end) in selections {
+        let clamped_start = start.min(text.len());
+        let clamped_end = end.min(text.len());
+        let start_line = text[..clamped_start].matches('\n').count();
+        let end_line = text[..clamped_end].matches('\n').count();
+
+        if start_line == end_line {
+            let col_start = col_in_line(text, clamped_start);
+            let col_end = col_in_line(text, clamped_end);
+            let y = text_origin.y + (start_line as f32) * line_height;
+            let x = text_origin.x + (col_start as f32) * char_width;
+            let w = ((col_end - col_start) as f32) * char_width;
+            let rect = Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, line_height));
+            if rect.intersects(text_rect) {
+                painter.rect_filled(rect, 1.0, sel_color);
+            }
+        } else {
+            for line in start_line..=end_line {
+                let (col_start, col_end) = if line == start_line {
+                    let cs = col_in_line(text, clamped_start);
+                    let line_end_byte = text[clamped_start..].find('\n').map(|p| clamped_start + p).unwrap_or(text.len());
+                    let ce = col_in_line(text, line_end_byte);
+                    (cs, ce)
+                } else if line == end_line {
+                    (0, col_in_line(text, clamped_end))
+                } else {
+                    (0, 80)
+                };
+                let y = text_origin.y + (line as f32) * line_height;
+                let x = text_origin.x + (col_start as f32) * char_width;
+                let w = ((col_end - col_start).max(1) as f32) * char_width;
+                let rect = Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, line_height));
+                if rect.intersects(text_rect) {
+                    painter.rect_filled(rect, 1.0, sel_color);
+                }
+            }
+        }
     }
 }

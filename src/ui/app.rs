@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::macros::MacroRecorder;
+use crate::editor::multi_cursor::MultiCursorState;
 use crate::editor::syntax::SyntaxHighlighter;
 use crate::editor::tab_manager::TabManager;
 use crate::io::recent_files::RecentFiles;
@@ -101,6 +102,8 @@ pub struct NotepadApp {
     show_minimap: bool,
     /// Whether to show the function list panel
     show_function_list: bool,
+    /// Multi-cursor editing state
+    multi_cursor: MultiCursorState,
     /// Find in Files dialog state
     show_find_in_files: bool,
     find_in_files_query: String,
@@ -191,6 +194,7 @@ impl NotepadApp {
             files_changed_externally: Vec::new(),
             show_minimap: false,
             show_function_list: false,
+            multi_cursor: MultiCursorState::new(),
             show_find_in_files: false,
             find_in_files_query: String::new(),
             find_in_files_dir: String::new(),
@@ -1484,6 +1488,8 @@ impl NotepadApp {
     fn render_editor(&mut self, ui: &mut Ui) {
         self.sync_cache_from_buffer();
         let bookmarks = self.tab_manager.active_document().bookmarks.all_bookmarks();
+        let extra_cursor_offsets = self.multi_cursor.cursor_offsets();
+        let extra_selections = self.multi_cursor.selections();
 
         if self.show_minimap {
             let available = ui.available_size();
@@ -1504,6 +1510,8 @@ impl NotepadApp {
                         &self.file_extension,
                         &bookmarks,
                         self.matching_bracket_pos,
+                        &extra_cursor_offsets,
+                        &extra_selections,
                     );
                 });
 
@@ -1525,6 +1533,8 @@ impl NotepadApp {
                 &self.file_extension,
                 &bookmarks,
                 self.matching_bracket_pos,
+                &extra_cursor_offsets,
+                &extra_selections,
             );
         }
         self.sync_buffer_from_cache();
@@ -1827,6 +1837,98 @@ impl NotepadApp {
         }
     }
 
+    fn action_select_next_occurrence(&mut self, _ctx: &egui::Context) {
+        self.sync_cache_from_buffer();
+
+        // Determine what text to search for
+        let search_text = if let Some(ref last) = self.multi_cursor.last_selected_text {
+            // Continue searching for the same text
+            last.clone()
+        } else {
+            // Try to get selected text from the document's cursor state
+            let doc = self.tab_manager.active_document();
+            if let Some((start_pos, end_pos)) = doc.cursor.selected_range() {
+                let start_byte = doc.buffer.byte_offset(start_pos.line, start_pos.col).unwrap_or(0);
+                let end_byte = doc.buffer.byte_offset(end_pos.line, end_pos.col).unwrap_or(0);
+                if start_byte < end_byte && end_byte <= self.text_cache.len() {
+                    self.text_cache[start_byte..end_byte].to_string()
+                } else {
+                    // No valid selection — select word under cursor
+                    let byte_pos = doc.buffer.byte_offset(doc.cursor.position.line, doc.cursor.position.col)
+                        .unwrap_or(0);
+                    match crate::editor::multi_cursor::word_at_offset(&self.text_cache, byte_pos) {
+                        Some((word, _, _)) => word,
+                        None => return,
+                    }
+                }
+            } else {
+                // No selection — select word under cursor
+                let byte_pos = doc.buffer.byte_offset(doc.cursor.position.line, doc.cursor.position.col)
+                    .unwrap_or(0);
+                match crate::editor::multi_cursor::word_at_offset(&self.text_cache, byte_pos) {
+                    Some((word, _, _)) => word,
+                    None => return,
+                }
+            }
+        };
+
+        self.multi_cursor.select_next_occurrence(&self.text_cache, &search_text);
+    }
+
+    fn handle_multi_cursor_input(&mut self, ctx: &egui::Context) {
+        if !self.multi_cursor.active {
+            return;
+        }
+
+        // Handle Ctrl+Click to add cursors
+        let ctrl_clicked = ctx.input(|i| {
+            if i.modifiers.ctrl {
+                i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten()
+            } else {
+                None
+            }
+        });
+        if let Some(_pos) = ctrl_clicked {
+            // We can't easily convert screen position to byte offset without galley info,
+            // so Ctrl+Click adds a cursor at the document cursor position after the click
+            // is processed by TextEdit. We'll handle this in render_editor instead.
+        }
+
+        // Intercept text input events and apply to extra cursors
+        let text_input: String = ctx.input(|i| {
+            i.events.iter().filter_map(|e| {
+                if let egui::Event::Text(t) = e {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            }).collect()
+        });
+
+        if !text_input.is_empty() {
+            self.multi_cursor.apply_insert(&mut self.text_cache, &text_input);
+            self.sync_buffer_from_cache();
+        }
+
+        // Handle Backspace
+        let backspace = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. }))
+        });
+        if backspace {
+            self.multi_cursor.apply_backspace(&mut self.text_cache, 1);
+            self.sync_buffer_from_cache();
+        }
+
+        // Handle Delete
+        let delete = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Delete, pressed: true, .. }))
+        });
+        if delete {
+            self.multi_cursor.apply_delete(&mut self.text_cache, 1);
+            self.sync_buffer_from_cache();
+        }
+    }
+
     // --- Keyboard shortcuts ---
 
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
@@ -1864,6 +1966,7 @@ impl NotepadApp {
         let ctrl_g = ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.ctrl && !i.modifiers.shift);
         let ctrl_bracket = ctx.input(|i| i.key_pressed(egui::Key::CloseBracket) && i.modifiers.ctrl);
         let ctrl_p = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && !i.modifiers.shift);
+        let ctrl_d = ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1881,6 +1984,7 @@ impl NotepadApp {
         if ctrl_f { self.action_show_find(); }
         if ctrl_h { self.action_show_replace(); }
         if escape && self.show_search_bar { self.action_close_search(); }
+        else if escape && self.multi_cursor.active { self.multi_cursor.clear(); }
         if f3 { self.action_find_next(); }
         if shift_f3 { self.action_find_prev(); }
         if ctrl_shift_j { self.action_json_format(); }
@@ -1905,6 +2009,10 @@ impl NotepadApp {
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::P));
             self.action_show_command_palette();
         }
+        if ctrl_d {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::D));
+            self.action_select_next_occurrence(ctx);
+        }
     }
 }
 
@@ -1916,6 +2024,7 @@ impl eframe::App for NotepadApp {
         }
 
         self.handle_keyboard_shortcuts(ctx);
+        self.handle_multi_cursor_input(ctx);
 
         // Update bracket matching
         {
