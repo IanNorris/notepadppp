@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::*;
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, EnableWindow};
@@ -218,10 +218,60 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+// Dark mode brush handles (global, created once)
+static mut DARK_BG_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
+static mut DARK_DLG_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
+static mut DARK_EDIT_BRUSH: *mut std::ffi::c_void = std::ptr::null_mut();
+
+// Dark mode color constants
+const CLR_DARK_BG: u32 = 0x001E1E1E;       // rgb(30,30,30)
+const CLR_DARK_TAB_BG: u32 = 0x00262625;   // rgb(37,37,38)
+const CLR_DARK_TAB_INACTIVE: u32 = 0x00302D2D; // rgb(45,45,48)
+const CLR_DARK_STATUS: u32 = 0x00CC7A00;    // rgb(0,122,204) in BGR
+const CLR_DARK_DLG: u32 = 0x00262625;       // rgb(37,37,38)
+const CLR_DARK_EDIT: u32 = 0x003C3C3C;      // rgb(60,60,60)
+const CLR_TEXT_LIGHT: u32 = 0x00D4D4D4;     // rgb(212,212,212)
+const CLR_TEXT_WHITE: u32 = 0x00FFFFFF;
+const CLR_TEXT_GRAY: u32 = 0x00A0A0A0;      // rgb(160,160,160)
+
+/// Apply dark title bar to a window.
+unsafe fn apply_dark_title_bar(hwnd: HWND) {
+    let use_dark: i32 = 1;
+    DwmSetWindowAttribute(
+        hwnd,
+        20,
+        &use_dark as *const i32 as *const _,
+        std::mem::size_of::<i32>() as u32,
+    );
+}
+
 // ── Entry point ──
 pub fn run() {
     unsafe {
         let hinstance = GetModuleHandleW(std::ptr::null());
+
+        // Enable dark mode for menus via undocumented uxtheme APIs (Windows 10 1903+)
+        let uxtheme_name = wide("uxtheme.dll");
+        let uxtheme = LoadLibraryW(uxtheme_name.as_ptr());
+        if !uxtheme.is_null() {
+            // Ordinal 135 = SetPreferredAppMode (AllowDark = 1)
+            let set_app_mode: Option<unsafe extern "system" fn(i32) -> i32> =
+                std::mem::transmute(GetProcAddress(uxtheme, 135 as *const u8));
+            if let Some(f) = set_app_mode {
+                f(1); // AllowDark
+            }
+            // Ordinal 136 = FlushMenuThemes
+            let flush: Option<unsafe extern "system" fn()> =
+                std::mem::transmute(GetProcAddress(uxtheme, 136 as *const u8));
+            if let Some(f) = flush {
+                f();
+            }
+        }
+
+        // Create dark mode brushes
+        DARK_BG_BRUSH = CreateSolidBrush(CLR_DARK_BG) as *mut _;
+        DARK_DLG_BRUSH = CreateSolidBrush(CLR_DARK_DLG) as *mut _;
+        DARK_EDIT_BRUSH = CreateSolidBrush(CLR_DARK_EDIT) as *mut _;
 
         // Init common controls (tabs + status bar)
         let icc = INITCOMMONCONTROLSEX {
@@ -275,15 +325,7 @@ pub fn run() {
         let h_accel = create_accelerators();
 
         // Enable dark title bar (Windows 10 1809+ / DWMWA_USE_IMMERSIVE_DARK_MODE)
-        let use_dark: i32 = 1;
-        // Attribute 20 is DWMWA_USE_IMMERSIVE_DARK_MODE (pre-20H1), 
-        // 19 is the undocumented version used in older builds
-        DwmSetWindowAttribute(
-            hwnd,
-            20, // DWMWA_USE_IMMERSIVE_DARK_MODE
-            &use_dark as *const i32 as *const _,
-            std::mem::size_of::<i32>() as u32,
-        );
+        apply_dark_title_bar(hwnd);
 
         // Init app state
         let state = Box::new(AppState {
@@ -597,13 +639,13 @@ unsafe fn append_menu(menu: HMENU, id: u16, text: &str) {
 unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
     let s = app();
 
-    // Tab control
+    // Tab control (owner-drawn for dark mode)
     let tab_class = wide("SysTabControl32");
     s.hwnd_tab = CreateWindowExW(
         0,
         tab_class.as_ptr(),
         std::ptr::null(),
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_OWNERDRAWFIXED,
         0,
         0,
         800,
@@ -666,10 +708,9 @@ unsafe fn create_controls(hwnd: HWND, hinstance: HINSTANCE) {
     // Apply dark visual theme to controls (Windows 10+)
     let dark_mode = wide("DarkMode_Explorer");
     SetWindowTheme(s.hwnd_tab, dark_mode.as_ptr(), std::ptr::null());
-    SetWindowTheme(s.hwnd_status, dark_mode.as_ptr(), std::ptr::null());
 
     // Dark background for the main window
-    let dark_brush = CreateSolidBrush(rgb(30, 30, 30) as u32);
+    let dark_brush = CreateSolidBrush(CLR_DARK_BG);
     SetClassLongPtrW(hwnd, GCL_HBRBACKGROUND, dark_brush as isize);
 
     update_status_bar();
@@ -740,6 +781,11 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             let nmhdr = &*(lparam as *const NMHDR);
             on_notify(nmhdr);
             0
+        }
+        WM_DRAWITEM => {
+            let dis = &*(lparam as *const DRAWITEMSTRUCT);
+            on_draw_item(dis);
+            1 // handled
         }
         WM_CLOSE => {
             DestroyWindow(hwnd);
@@ -1001,6 +1047,75 @@ unsafe fn on_drop_files(hdrop: HDROP) {
         }
     }
     DragFinish(hdrop);
+}
+
+// ── Owner-draw handler for dark tabs and status bar ──
+
+unsafe fn on_draw_item(dis: &DRAWITEMSTRUCT) {
+    if APP.is_null() {
+        return;
+    }
+    let s = app();
+
+    // Tab control drawing
+    if dis.hwndItem == s.hwnd_tab {
+        let hdc = dis.hDC;
+        let rc = dis.rcItem;
+        let is_selected = (dis.itemState & ODS_SELECTED) != 0;
+
+        // Background color
+        let bg_color = if is_selected { CLR_DARK_BG } else { CLR_DARK_TAB_INACTIVE };
+        let brush = CreateSolidBrush(bg_color);
+        FillRect(hdc, &rc, brush);
+        DeleteObject(brush as *mut _);
+
+        // Get tab text
+        let mut item: TCITEMW = std::mem::zeroed();
+        let mut buf = [0u16; 256];
+        item.mask = TCIF_TEXT;
+        item.pszText = buf.as_mut_ptr();
+        item.cchTextMax = buf.len() as i32;
+        SendMessageW(s.hwnd_tab, TCM_GETITEMW, dis.itemID as usize, &item as *const _ as isize);
+
+        // Draw text
+        let text_color = if is_selected { CLR_TEXT_WHITE } else { CLR_TEXT_GRAY };
+        SetTextColor(hdc, text_color);
+        SetBkMode(hdc, TRANSPARENT as i32);
+        let text_len = buf.iter().position(|&c| c == 0).unwrap_or(0) as i32;
+        let mut text_rc = rc;
+        text_rc.left += 6;
+        text_rc.right -= 4;
+        DrawTextW(hdc, buf.as_ptr(), text_len,
+            &mut text_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+        return;
+    }
+
+    // Status bar drawing
+    if dis.hwndItem == s.hwnd_status {
+        let hdc = dis.hDC;
+        let rc = dis.rcItem;
+
+        // Blue background like VS Code
+        let brush = CreateSolidBrush(CLR_DARK_STATUS);
+        FillRect(hdc, &rc, brush);
+        DeleteObject(brush as *mut _);
+
+        // Draw text from lParam (pointer to wide string set via SBT_OWNERDRAW)
+        if dis.itemData != 0 {
+            SetTextColor(hdc, CLR_TEXT_WHITE);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            let text_ptr = dis.itemData as *const u16;
+            let mut len = 0i32;
+            while *text_ptr.offset(len as isize) != 0 {
+                len += 1;
+            }
+            let mut text_rc = rc;
+            text_rc.left += 6;
+            DrawTextW(hdc, text_ptr, len,
+                &mut text_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
 }
 
 // ── Tab management ──
@@ -1427,7 +1542,7 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        hbrBackground: DARK_DLG_BRUSH as *mut _,
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
@@ -1449,6 +1564,9 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
         hinstance,
         std::ptr::null(),
     );
+
+    // Dark title bar
+    apply_dark_title_bar(dlg);
 
     // Create child controls
     let label_class = wide("STATIC");
@@ -1534,6 +1652,24 @@ unsafe fn goto_line_dialog(parent: HWND, hwnd_sci: HWND, max_line: usize) {
                     DestroyWindow(hwnd);
                 }
                 0
+            }
+            WM_CTLCOLORSTATIC => {
+                let hdc = wparam as HDC;
+                SetTextColor(hdc, CLR_TEXT_LIGHT);
+                SetBkMode(hdc, TRANSPARENT as i32);
+                DARK_DLG_BRUSH as isize
+            }
+            WM_CTLCOLOREDIT => {
+                let hdc = wparam as HDC;
+                SetTextColor(hdc, CLR_TEXT_WHITE);
+                SetBkColor(hdc, CLR_DARK_EDIT);
+                DARK_EDIT_BRUSH as isize
+            }
+            WM_CTLCOLORBTN => {
+                DARK_DLG_BRUSH as isize
+            }
+            WM_CTLCOLORDLG => {
+                DARK_DLG_BRUSH as isize
             }
             WM_CLOSE => {
                 DestroyWindow(hwnd);
@@ -1873,7 +2009,7 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        hbrBackground: DARK_DLG_BRUSH as *mut _,
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
@@ -1896,6 +2032,8 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
     );
     FIND_DLG_HWND = dlg;
 
+    // Dark title bar
+    apply_dark_title_bar(dlg);
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
     let btn_c = wide("BUTTON");
@@ -1941,19 +2079,19 @@ unsafe fn cmd_open_find_replace(show_replace: bool) {
 
     // Checkboxes
     let y_chk = y_rep + 36;
-    let mk_chk = |text: &str, x: i32, y: i32, id: i32, checked: bool| {
+    let mk_chk = |text: &str, x: i32, y: i32, w_px: i32, id: i32, checked: bool| {
         let w = wide(text);
         let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003/*BS_AUTOCHECKBOX*/;
         let h = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
-            x, y, 130, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+            x, y, w_px, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
         if checked {
             SendMessageW(h, 0x00F1/*BM_SETCHECK*/, 1/*BST_CHECKED*/, 0);
         }
     };
-    mk_chk("Match case", 10, y_chk, IDC_MATCH_CASE, false);
-    mk_chk("Whole word", 145, y_chk, IDC_WHOLE_WORD, false);
-    mk_chk("Regular expression", 10, y_chk + 22, IDC_REGEX, false);
-    mk_chk("Wrap around", 145, y_chk + 22, IDC_WRAP_AROUND, true);
+    mk_chk("Match case", 10, y_chk, 130, IDC_MATCH_CASE, false);
+    mk_chk("Whole word", 145, y_chk, 130, IDC_WHOLE_WORD, false);
+    mk_chk("Regular expression", 10, y_chk + 22, 160, IDC_REGEX, false);
+    mk_chk("Wrap around", 175, y_chk + 22, 130, IDC_WRAP_AROUND, true);
 
     // Direction radio buttons
     let y_dir = y_chk + 50;
@@ -2283,6 +2421,24 @@ unsafe extern "system" fn find_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
                 _ => {}
             }
             0
+        }
+        WM_CTLCOLORSTATIC => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_LIGHT);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLOREDIT => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_WHITE);
+            SetBkColor(hdc, CLR_DARK_EDIT);
+            DARK_EDIT_BRUSH as isize
+        }
+        WM_CTLCOLORBTN => {
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLORDLG => {
+            DARK_DLG_BRUSH as isize
         }
         WM_CLOSE => {
             // Clear find indicators when closing
@@ -3029,7 +3185,7 @@ unsafe fn cmd_find_in_files_dialog() {
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        hbrBackground: DARK_DLG_BRUSH as *mut _,
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
@@ -3049,6 +3205,9 @@ unsafe fn cmd_find_in_files_dialog() {
         std::ptr::null(),
     );
     FIF_DLG_HWND = dlg;
+
+    // Dark title bar
+    apply_dark_title_bar(dlg);
 
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
@@ -3225,6 +3384,24 @@ unsafe extern "system" fn fif_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             }
             0
         }
+        WM_CTLCOLORSTATIC => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_LIGHT);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLOREDIT => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_WHITE);
+            SetBkColor(hdc, CLR_DARK_EDIT);
+            DARK_EDIT_BRUSH as isize
+        }
+        WM_CTLCOLORBTN => {
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLORDLG => {
+            DARK_DLG_BRUSH as isize
+        }
         WM_CLOSE => {
             DestroyWindow(hwnd);
             FIF_DLG_HWND = std::ptr::null_mut();
@@ -3264,7 +3441,7 @@ unsafe fn cmd_preferences_dialog() {
         hInstance: hinstance,
         hIcon: std::ptr::null_mut(),
         hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        hbrBackground: DARK_DLG_BRUSH as *mut _,
         lpszMenuName: std::ptr::null(),
         lpszClassName: class_name.as_ptr(),
         hIconSm: std::ptr::null_mut(),
@@ -3284,6 +3461,9 @@ unsafe fn cmd_preferences_dialog() {
         std::ptr::null(),
     );
     PREF_DLG_HWND = dlg;
+
+    // Dark title bar
+    apply_dark_title_bar(dlg);
 
     let static_c = wide("STATIC");
     let edit_c = wide("EDIT");
@@ -3408,6 +3588,24 @@ unsafe extern "system" fn pref_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             }
             0
         }
+        WM_CTLCOLORSTATIC => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_LIGHT);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLOREDIT => {
+            let hdc = wparam as HDC;
+            SetTextColor(hdc, CLR_TEXT_WHITE);
+            SetBkColor(hdc, CLR_DARK_EDIT);
+            DARK_EDIT_BRUSH as isize
+        }
+        WM_CTLCOLORBTN => {
+            DARK_DLG_BRUSH as isize
+        }
+        WM_CTLCOLORDLG => {
+            DARK_DLG_BRUSH as isize
+        }
         WM_CLOSE => {
             EnableWindow(app().hwnd_main, TRUE);
             SetForegroundWindow(app().hwnd_main);
@@ -3448,7 +3646,8 @@ unsafe fn update_status_bar() {
 
 unsafe fn set_sb_text(hwnd: HWND, part: usize, text: &str) {
     let w = wide(text);
-    SendMessageW(hwnd, SB_SETTEXTW, part, w.as_ptr() as LPARAM);
+    // SBT_OWNERDRAW = 0x1000 — triggers WM_DRAWITEM for custom painting
+    SendMessageW(hwnd, SB_SETTEXTW, part | 0x1000, w.as_ptr() as LPARAM);
 }
 
 // ── Utility ──
