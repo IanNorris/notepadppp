@@ -79,7 +79,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ### 3.2 Find in Files
 - [x] Search across files in directory/subdirectories
 - [x] File type filters (e.g., *.rs, *.txt)
-- [ ] Replace in files
+- [x] Replace in files
 - [x] Results panel with file, line number, matching text
 - [x] Click result to jump to file and line
 

@@ -1,5 +1,5 @@
 use notepadppp::search::{
-    FindInFiles, SearchEngine, SearchHistory, SearchMatch, SearchMode,
+    FindInFiles, ReplaceInFilesResult, SearchEngine, SearchHistory, SearchMatch, SearchMode,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -578,4 +578,125 @@ fn replace_next_no_match_returns_none() {
     engine.wrap_around = false;
     let text = "hello world";
     assert!(engine.replace_next(text, 0).is_none());
+}
+
+// ─── Replace in files ────────────────────────────────────────────
+
+#[test]
+fn replace_in_files_basic() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "hello world hello").unwrap();
+    fs::write(dir.path().join("b.txt"), "hello there").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "hello", "goodbye", "*", true, true, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "goodbye world goodbye");
+    assert_eq!(fs::read_to_string(dir.path().join("b.txt")).unwrap(), "goodbye there");
+}
+
+#[test]
+fn replace_in_files_with_filter() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+    fs::write(dir.path().join("b.md"), "hello world").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "hello", "goodbye", "*.txt", true, true, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "goodbye world");
+    assert_eq!(fs::read_to_string(dir.path().join("b.md")).unwrap(), "hello world");
+}
+
+#[test]
+fn replace_in_files_recursive() {
+    let dir = TempDir::new().unwrap();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    fs::write(dir.path().join("a.txt"), "hello").unwrap();
+    fs::write(sub.join("b.txt"), "hello").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "hello", "goodbye", "*.txt", true, true, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "goodbye");
+    assert_eq!(fs::read_to_string(sub.join("b.txt")).unwrap(), "goodbye");
+}
+
+#[test]
+fn replace_in_files_case_insensitive() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "Hello HELLO hello").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "hello", "bye", "*", true, false, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].replacements, 3);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "bye bye bye");
+}
+
+#[test]
+fn replace_in_files_regex() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "abc 123 def 456").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), r"\d+", "#", "*", true, true, true,
+    ).unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].replacements, 2);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "abc # def #");
+}
+
+#[test]
+fn replace_in_files_no_matches() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "xyz", "abc", "*", true, true, false,
+    ).unwrap();
+
+    assert!(results.is_empty());
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "hello world");
+}
+
+#[test]
+fn replace_in_files_preserves_unmatched() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("match.txt"), "hello world").unwrap();
+    fs::write(dir.path().join("nomatch.txt"), "goodbye world").unwrap();
+
+    let original_content = fs::read_to_string(dir.path().join("nomatch.txt")).unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "hello", "replaced", "*", true, true, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].path.to_string_lossy().contains("match.txt"));
+    assert_eq!(fs::read_to_string(dir.path().join("nomatch.txt")).unwrap(), original_content);
+}
+
+#[test]
+fn replace_in_files_multiple_occurrences() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("a.txt"), "foo bar foo baz foo").unwrap();
+
+    let results = FindInFiles::replace_in_files(
+        dir.path(), "foo", "X", "*", true, true, false,
+    ).unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].replacements, 3);
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "X bar X baz X");
 }

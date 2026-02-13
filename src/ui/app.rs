@@ -112,6 +112,8 @@ pub struct NotepadApp {
     find_in_files_dir: String,
     find_in_files_pattern: String,
     find_in_files_results: Vec<(String, usize, String)>, // (file_path, line_num, line_text)
+    find_in_files_replace: String,
+    find_in_files_replace_results: Vec<(String, usize)>, // (file_path, replacement_count)
     /// Column (rectangular) selection state
     column_selection: ColumnSelection,
     /// Configurable keyboard shortcuts
@@ -214,6 +216,8 @@ impl NotepadApp {
             find_in_files_dir: String::new(),
             find_in_files_pattern: String::from("*"),
             find_in_files_results: Vec::new(),
+            find_in_files_replace: String::new(),
+            find_in_files_replace_results: Vec::new(),
             column_selection: ColumnSelection::new(),
             keybindings: KeyBindings::load(&KeyBindings::keybindings_path())
                 .unwrap_or_default(),
@@ -2608,6 +2612,7 @@ impl eframe::App for NotepadApp {
         if self.show_find_in_files {
             let mut close = false;
             let mut do_search = false;
+            let mut do_replace = false;
             egui::Window::new("Find in Files")
                 .collapsible(false)
                 .resizable(true)
@@ -2630,13 +2635,32 @@ impl eframe::App for NotepadApp {
                         }
                     });
                     ui.horizontal(|ui| {
+                        ui.label("Replace:");
+                        ui.text_edit_singleline(&mut self.find_in_files_replace);
+                    });
+                    ui.horizontal(|ui| {
                         if ui.button("Search").clicked() {
                             do_search = true;
+                        }
+                        if ui.button("Replace All in Files").clicked() {
+                            do_replace = true;
                         }
                         if ui.button("Close").clicked() {
                             close = true;
                         }
                     });
+
+                    if !self.find_in_files_replace_results.is_empty() {
+                        ui.separator();
+                        let total_replacements: usize = self.find_in_files_replace_results.iter().map(|(_, c)| c).sum();
+                        let total_files = self.find_in_files_replace_results.len();
+                        ui.label(format!("Replaced {} occurrences in {} files", total_replacements, total_files));
+                        egui::ScrollArea::vertical().id_salt("replace_results").max_height(150.0).show(ui, |ui| {
+                            for (path, count) in &self.find_in_files_replace_results {
+                                ui.label(format!("{}: {} replacements", path, count));
+                            }
+                        });
+                    }
 
                     if !self.find_in_files_results.is_empty() {
                         ui.separator();
@@ -2688,6 +2712,29 @@ impl eframe::App for NotepadApp {
                     }
                 }
                 self.find_in_files_results = results;
+            }
+            if do_replace && !self.find_in_files_query.is_empty() && !self.find_in_files_dir.is_empty() {
+                let dir = std::path::Path::new(&self.find_in_files_dir);
+                if dir.is_dir() {
+                    use crate::search::FindInFiles;
+                    let case_sensitive = self.search_bar_state.case_sensitive;
+                    let use_regex = self.search_bar_state.use_regex;
+                    if let Ok(replace_results) = FindInFiles::replace_in_files(
+                        dir,
+                        &self.find_in_files_query,
+                        &self.find_in_files_replace,
+                        &self.find_in_files_pattern,
+                        true,
+                        case_sensitive,
+                        use_regex,
+                    ) {
+                        self.find_in_files_replace_results = replace_results
+                            .iter()
+                            .map(|r| (r.path.to_string_lossy().to_string(), r.replacements))
+                            .collect();
+                    }
+                }
+                self.find_in_files_results.clear();
             }
             if close {
                 self.show_find_in_files = false;
