@@ -192,6 +192,19 @@ pub const SC_TECHNOLOGY_DIRECTWRITE: i32 = 1;
 
 // Notifications
 pub const SCN_UPDATEUI: u32 = 2007;
+pub const SCN_MACRORECORD: u32 = 2009;
+
+// Document pointer (split view)
+pub const SCI_GETDOCPOINTER: u32 = 2357;
+pub const SCI_SETDOCPOINTER: u32 = 2358;
+pub const SCI_ADDREFDOCUMENT: u32 = 2376;
+
+// Macro recording
+pub const SCI_STARTRECORD: u32 = 3001;
+pub const SCI_STOPRECORD: u32 = 3002;
+
+// Read-only
+pub const SCI_SETREADONLY: u32 = 2171;
 
 // Helper: make an RGB color for Scintilla (0x00BBGGRR)
 pub const fn rgb(r: u8, g: u8, b: u8) -> i32 {

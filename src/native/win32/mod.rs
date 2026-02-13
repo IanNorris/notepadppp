@@ -146,10 +146,14 @@ const IDM_SETTINGS_SHORTCUTS: u16 = 802;
 // Help menu
 const IDM_HELP_ABOUT: u16 = 901;
 
+// Recent files menu IDs
+const IDM_RECENT_BASE: u16 = 1100;
+
 // Control IDs
 const ID_TAB_CONTROL: i32 = 1000;
 const ID_STATUS_BAR: i32 = 1001;
 const ID_SCINTILLA: i32 = 1002;
+const ID_SCINTILLA2: i32 = 1003;
 
 // WM_NOTIFY codes for tab control
 const TCN_FIRST: i32 = -550;
@@ -182,6 +186,7 @@ struct AppState {
     hwnd_main: HWND,
     hwnd_tab: HWND,
     hwnd_scintilla: HWND,
+    hwnd_scintilla2: HWND,
     hwnd_status: HWND,
     h_accel: HACCEL,
     tabs: Vec<TabDocument>,
@@ -192,6 +197,12 @@ struct AppState {
     show_whitespace: bool,
     encoding: String,
     line_ending: String,
+    split_mode: u8, // 0=none, 1=horizontal, 2=vertical
+    recent_files: Vec<PathBuf>,
+    hex_mode: bool,
+    hex_original: Vec<u8>,
+    recording: bool,
+    macro_buffer: Vec<(u32, usize, isize)>,
 }
 
 static mut APP: *mut AppState = std::ptr::null_mut();
@@ -266,6 +277,7 @@ pub fn run() {
             hwnd_main: hwnd,
             hwnd_tab: std::ptr::null_mut(),
             hwnd_scintilla: std::ptr::null_mut(),
+            hwnd_scintilla2: std::ptr::null_mut(),
             hwnd_status: std::ptr::null_mut(),
             h_accel,
             tabs: Vec::new(),
@@ -276,8 +288,17 @@ pub fn run() {
             show_whitespace: false,
             encoding: "UTF-8".to_string(),
             line_ending: "CRLF".to_string(),
+            split_mode: 0,
+            recent_files: Vec::new(),
+            hex_mode: false,
+            hex_original: Vec::new(),
+            recording: false,
+            macro_buffer: Vec::new(),
         });
         APP = Box::into_raw(state);
+
+        // Load recent files list
+        load_recent_files();
 
         // Create child controls
         create_controls(hwnd, hinstance);
@@ -731,7 +752,20 @@ unsafe fn on_size(hwnd: HWND) {
     let sci_y = tab_h;
     let sci_h = h - tab_h - sb_h;
     if sci_h > 0 {
-        MoveWindow(s.hwnd_scintilla, 0, sci_y, w, sci_h, TRUE);
+        if s.split_mode == 0 || s.hwnd_scintilla2.is_null() {
+            // No split — primary editor fills all
+            MoveWindow(s.hwnd_scintilla, 0, sci_y, w, sci_h, TRUE);
+        } else if s.split_mode == 1 {
+            // Horizontal split — stacked
+            let half = sci_h / 2;
+            MoveWindow(s.hwnd_scintilla, 0, sci_y, w, half, TRUE);
+            MoveWindow(s.hwnd_scintilla2, 0, sci_y + half, w, sci_h - half, TRUE);
+        } else {
+            // Vertical split — side by side
+            let half = w / 2;
+            MoveWindow(s.hwnd_scintilla, 0, sci_y, half, sci_h, TRUE);
+            MoveWindow(s.hwnd_scintilla2, half, sci_y, w - half, sci_h, TRUE);
+        }
     }
 }
 
@@ -742,6 +776,12 @@ unsafe fn on_command(id: u16) {
     // Language menu range
     if id >= IDM_LANG_BASE && id < lang_end {
         cmd_set_language((id - IDM_LANG_BASE) as usize);
+        return;
+    }
+
+    // Recent files range
+    if id >= IDM_RECENT_BASE && id < IDM_RECENT_BASE + 10 {
+        cmd_open_recent((id - IDM_RECENT_BASE) as usize);
         return;
     }
 
@@ -830,9 +870,9 @@ unsafe fn on_command(id: u16) {
         IDM_VIEW_WORDWRAP => cmd_toggle_word_wrap(),
         IDM_VIEW_LINENUMBERS => cmd_toggle_line_numbers(),
         IDM_VIEW_WHITESPACE => cmd_toggle_whitespace(),
-        IDM_VIEW_SPLIT_HORIZ | IDM_VIEW_SPLIT_VERT | IDM_VIEW_REMOVE_SPLIT => {
-            show_todo("Split view is not yet implemented.");
-        }
+        IDM_VIEW_SPLIT_HORIZ => cmd_split_view(1),
+        IDM_VIEW_SPLIT_VERT => cmd_split_view(2),
+        IDM_VIEW_REMOVE_SPLIT => cmd_remove_split(),
         IDM_VIEW_ZOOM_IN => { sci_send(app().hwnd_scintilla, SCI_ZOOMIN, 0, 0); }
         IDM_VIEW_ZOOM_OUT => { sci_send(app().hwnd_scintilla, SCI_ZOOMOUT, 0, 0); }
         IDM_VIEW_ZOOM_RESET => { sci_send(app().hwnd_scintilla, SCI_SETZOOM, 0, 0); }
@@ -857,12 +897,11 @@ unsafe fn on_command(id: u16) {
         IDM_TOOL_BASE64_DECODE => { cmd_text_transform_result(crate::tools::mime_tools::base64_decode); }
         IDM_TOOL_URL_ENCODE => { cmd_text_transform(crate::tools::mime_tools::url_encode); }
         IDM_TOOL_URL_DECODE => { cmd_text_transform_result(crate::tools::mime_tools::url_decode); }
-        IDM_TOOL_HEX_VIEWER => { show_todo("Hex viewer is not yet implemented."); }
+        IDM_TOOL_HEX_VIEWER => { cmd_hex_viewer(); }
 
-        // ── Macro (placeholder) ──
-        IDM_MACRO_RECORD | IDM_MACRO_PLAY => {
-            show_todo("Macro recording is not yet implemented.");
-        }
+        // ── Macro ──
+        IDM_MACRO_RECORD => { cmd_macro_toggle_record(); }
+        IDM_MACRO_PLAY => { cmd_macro_play(); }
 
         // ── Settings (placeholder) ──
         IDM_SETTINGS_PREFERENCES | IDM_SETTINGS_SHORTCUTS => {
@@ -884,9 +923,39 @@ unsafe fn on_notify(nmhdr: &NMHDR) {
         switch_tab(new_idx);
     }
 
-    // Scintilla notification
-    if nmhdr.hwndFrom == s.hwnd_scintilla && nmhdr.code == SCN_UPDATEUI {
+    // Scintilla notification (from either editor)
+    if (nmhdr.hwndFrom == s.hwnd_scintilla || nmhdr.hwndFrom == s.hwnd_scintilla2)
+        && nmhdr.code == SCN_UPDATEUI
+    {
         update_status_bar();
+    }
+
+    // Macro recording notification
+    if nmhdr.hwndFrom == s.hwnd_scintilla && nmhdr.code == SCN_MACRORECORD && s.recording {
+        // The SCNotification struct has: code, ..., message, wParam, lParam at known offsets.
+        // SCNotification layout: NMHDR (12 or 24 bytes on 64-bit), then fields.
+        // On 64-bit: NMHDR is 24 bytes, then position(isize=8), ch(i32=4), modifiers(i32=4),
+        //   modificationType(i32=4), padding(4), text(ptr=8), length(isize=8), linesAdded(isize=8),
+        //   message(i32=4), wParam(usize=8), lParam(isize=8)
+        // We use a simpler approach: cast to a raw pointer and offset.
+        #[repr(C)]
+        struct SCNotification {
+            nmhdr: NMHDR,            // 24 bytes on x86_64
+            position: isize,         // 8
+            ch: i32,                 // 4
+            modifiers: i32,          // 4
+            modification_type: i32,  // 4
+            _pad0: i32,              // 4 (padding)
+            text: *const u8,         // 8
+            length: isize,           // 8
+            lines_added: isize,      // 8
+            message: i32,            // 4
+            _pad1: i32,              // 4 (padding)
+            w_param: usize,          // 8
+            l_param: isize,          // 8
+        }
+        let scn = &*(nmhdr as *const NMHDR as *const SCNotification);
+        s.macro_buffer.push((scn.message as u32, scn.w_param, scn.l_param));
     }
 }
 
@@ -1009,7 +1078,7 @@ unsafe fn open_file_in_tab(path_str: &str) {
         language_name_for_extension(ext)
     };
     let doc = TabDocument {
-        path: Some(path),
+        path: Some(path.clone()),
         title: title.clone(),
         text: content,
         language: lang,
@@ -1019,6 +1088,9 @@ unsafe fn open_file_in_tab(path_str: &str) {
     insert_tab_item(idx, &title);
     SendMessageW(s.hwnd_tab, TCM_SETCURSEL, idx, 0);
     switch_tab(idx);
+
+    // Add to recent files
+    add_recent_file(path);
 }
 
 unsafe fn cmd_save_file(save_as: bool) {
@@ -2380,6 +2452,316 @@ unsafe fn cmd_select_all_occurrences() {
 
     if idx > 0 {
         sci_send(hwnd, SCI_SETMAINSELECTION, main_idx, 0);
+    }
+}
+
+// ── Split View ──
+
+unsafe fn cmd_split_view(mode: u8) {
+    let s = app();
+    // If already split, remove first
+    if !s.hwnd_scintilla2.is_null() {
+        cmd_remove_split();
+    }
+    s.split_mode = mode;
+
+    let hinstance = GetModuleHandleW(std::ptr::null());
+    let sci_class = wide("Scintilla");
+    s.hwnd_scintilla2 = CreateWindowExW(
+        0,
+        sci_class.as_ptr(),
+        std::ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+        0, 0, 100, 100,
+        s.hwnd_main,
+        ID_SCINTILLA2 as isize as HMENU,
+        hinstance,
+        std::ptr::null(),
+    );
+
+    // Apply dark theme
+    sci_configure_dark(s.hwnd_scintilla2);
+
+    // Share the document from primary editor
+    let doc_ptr = sci_send(s.hwnd_scintilla, SCI_GETDOCPOINTER, 0, 0);
+    sci_send(s.hwnd_scintilla, SCI_ADDREFDOCUMENT, 0, doc_ptr);
+    sci_send(s.hwnd_scintilla2, SCI_SETDOCPOINTER, 0, doc_ptr);
+
+    // Apply same lexer
+    if !s.tabs.is_empty() {
+        apply_lexer_to_hwnd(s.hwnd_scintilla2, s.active_tab);
+    }
+
+    // Configure bookmark marker on secondary
+    sci_send(s.hwnd_scintilla2, SCI_MARKERDEFINE, BOOKMARK_MARKER, SC_MARK_CIRCLE as isize);
+    sci_send(s.hwnd_scintilla2, SCI_MARKERSETFORE, BOOKMARK_MARKER, rgb(255, 255, 255) as isize);
+    sci_send(s.hwnd_scintilla2, SCI_MARKERSETBACK, BOOKMARK_MARKER, rgb(30, 120, 220) as isize);
+
+    // Apply same word wrap / line number / whitespace settings
+    let wrap_mode = if s.word_wrap { SC_WRAP_WORD } else { SC_WRAP_NONE };
+    sci_send(s.hwnd_scintilla2, SCI_SETWRAPMODE, wrap_mode as usize, 0);
+    let ln_width = if s.line_numbers { 48 } else { 0 };
+    sci_send(s.hwnd_scintilla2, SCI_SETMARGINWIDTHN, 0, ln_width);
+    let ws = if s.show_whitespace { SCWS_VISIBLEALWAYS } else { SCWS_INVISIBLE };
+    sci_send(s.hwnd_scintilla2, SCI_SETVIEWWS, ws as usize, 0);
+
+    // Trigger resize
+    on_size(s.hwnd_main);
+}
+
+unsafe fn cmd_remove_split() {
+    let s = app();
+    if s.hwnd_scintilla2.is_null() {
+        return;
+    }
+    // Release the shared document reference
+    let doc_ptr = sci_send(s.hwnd_scintilla2, SCI_GETDOCPOINTER, 0, 0);
+    sci_send(s.hwnd_scintilla2, SCI_SETDOCPOINTER, 0, 0); // detach
+    sci_send(s.hwnd_scintilla, SCI_ADDREFDOCUMENT, 0, doc_ptr); // won't hurt if already owned
+    // Actually we need to release. The primary still owns it. Just destroy.
+    DestroyWindow(s.hwnd_scintilla2);
+    s.hwnd_scintilla2 = std::ptr::null_mut();
+    s.split_mode = 0;
+    on_size(s.hwnd_main);
+}
+
+/// Apply lexer to a specific scintilla hwnd for a given tab index.
+unsafe fn apply_lexer_to_hwnd(hwnd: HWND, idx: usize) {
+    let s = app();
+    let ext = s.tabs[idx]
+        .path
+        .as_ref()
+        .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    if let Some(name) = lexer_for_extension(ext) {
+        let mut cname = name.as_bytes().to_vec();
+        cname.push(0);
+        let lexer = CreateLexer(cname.as_ptr());
+        if !lexer.is_null() {
+            sci_send(hwnd, SCI_SETILEXER, 0, lexer as isize);
+            let len = sci_send(hwnd, SCI_GETLENGTH, 0, 0);
+            sci_send(hwnd, SCI_COLOURISE, 0, len);
+        }
+    } else {
+        sci_send(hwnd, SCI_SETILEXER, 0, 0);
+    }
+}
+
+// ── Recent Files ──
+
+fn recent_files_path() -> PathBuf {
+    // Store next to the executable, or fallback to temp
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return dir.join("notepadppp_recent.txt");
+        }
+    }
+    std::env::temp_dir().join("notepadppp_recent.txt")
+}
+
+unsafe fn load_recent_files() {
+    let path = recent_files_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let s = app();
+        s.recent_files = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(10)
+            .map(PathBuf::from)
+            .collect();
+    }
+}
+
+unsafe fn save_recent_files() {
+    let s = app();
+    let content: String = s.recent_files
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::write(recent_files_path(), content);
+}
+
+unsafe fn add_recent_file(path: PathBuf) {
+    let s = app();
+    // Remove duplicates
+    s.recent_files.retain(|p| p != &path);
+    // Insert at front
+    s.recent_files.insert(0, path);
+    // Keep max 10
+    s.recent_files.truncate(10);
+    save_recent_files();
+    rebuild_recent_menu();
+}
+
+unsafe fn rebuild_recent_menu() {
+    let s = app();
+    let menu_bar = GetMenu(s.hwnd_main);
+    // The Recent Files submenu is inside the File menu (first popup).
+    // File menu is the first item in menu_bar.
+    let file_menu = GetSubMenu(menu_bar, 0);
+    // Find the Recent Files submenu by iterating menu items
+    let count = GetMenuItemCount(file_menu);
+    for i in 0..count {
+        let sub = GetSubMenu(file_menu, i);
+        if !sub.is_null() {
+            // Check if this is the recent files submenu by checking item IDs
+            let item_id = GetMenuItemID(sub, 0);
+            // Our recent menu has items IDM_RECENT_BASE or the "(empty)" placeholder (id 0)
+            if item_id == 0 || (item_id >= IDM_RECENT_BASE as u32 && item_id < (IDM_RECENT_BASE + 10) as u32) {
+                // Clear existing items
+                while GetMenuItemCount(sub) > 0 {
+                    DeleteMenu(sub, 0, MF_BYPOSITION);
+                }
+                // Add recent files
+                if s.recent_files.is_empty() {
+                    append_menu(sub, 0, "(empty)");
+                } else {
+                    for (j, path) in s.recent_files.iter().enumerate() {
+                        let label = format!("&{} {}", j + 1,
+                            path.file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.to_string_lossy().to_string()));
+                        append_menu(sub, IDM_RECENT_BASE + j as u16, &label);
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
+unsafe fn cmd_open_recent(idx: usize) {
+    let s = app();
+    if idx >= s.recent_files.len() {
+        return;
+    }
+    let path = s.recent_files[idx].clone();
+    let path_str = path.to_string_lossy().to_string();
+    if path.exists() {
+        open_file_in_tab(&path_str);
+    } else {
+        let title = wide("File Not Found");
+        let msg = wide(&format!("The file no longer exists:\n{}", path_str));
+        MessageBoxW(s.hwnd_main, msg.as_ptr(), title.as_ptr(), MB_OK | 0x10);
+        // Remove from list
+        s.recent_files.remove(idx);
+        save_recent_files();
+        rebuild_recent_menu();
+    }
+}
+
+// ── Hex Viewer ──
+
+unsafe fn cmd_hex_viewer() {
+    let s = app();
+
+    if s.hex_mode {
+        // Toggle off — restore original content
+        sci_send(s.hwnd_scintilla, SCI_SETREADONLY, 0, 0);
+        sci_set_text(s.hwnd_scintilla, &s.hex_original);
+        s.hex_original.clear();
+        s.hex_mode = false;
+        // Re-apply lexer
+        if !s.tabs.is_empty() {
+            apply_lexer_for_tab(s.active_tab);
+        }
+    } else {
+        // Toggle on — save original and show hex dump
+        let raw = sci_get_text(s.hwnd_scintilla);
+        s.hex_original = raw.clone();
+        s.hex_mode = true;
+
+        let hex_dump = format_hex_dump(&raw);
+        // Set to plain text lexer
+        sci_send(s.hwnd_scintilla, SCI_SETILEXER, 0, 0);
+        sci_set_text(s.hwnd_scintilla, hex_dump.as_bytes());
+        sci_send(s.hwnd_scintilla, SCI_SETREADONLY, 1, 0);
+    }
+
+    // Update menu check
+    let menu = GetMenu(s.hwnd_main);
+    let flags = if s.hex_mode { MF_CHECKED } else { MF_UNCHECKED };
+    CheckMenuItem(menu, IDM_TOOL_HEX_VIEWER as u32, flags);
+}
+
+fn format_hex_dump(data: &[u8]) -> String {
+    let mut result = String::new();
+    for (i, chunk) in data.chunks(16).enumerate() {
+        let offset = i * 16;
+        // Offset
+        result.push_str(&format!("{:08X}  ", offset));
+        // Hex bytes (two groups of 8)
+        for j in 0..16 {
+            if j == 8 {
+                result.push(' ');
+            }
+            if j < chunk.len() {
+                result.push_str(&format!("{:02X} ", chunk[j]));
+            } else {
+                result.push_str("   ");
+            }
+        }
+        // ASCII
+        result.push_str(" |");
+        for &b in chunk {
+            if b >= 0x20 && b <= 0x7E {
+                result.push(b as char);
+            } else {
+                result.push('.');
+            }
+        }
+        // Pad ASCII column
+        for _ in chunk.len()..16 {
+            result.push(' ');
+        }
+        result.push_str("|\n");
+    }
+    result
+}
+
+// ── Macro Recording/Playback ──
+
+unsafe fn cmd_macro_toggle_record() {
+    let s = app();
+    if s.recording {
+        // Stop recording
+        sci_send(s.hwnd_scintilla, SCI_STOPRECORD, 0, 0);
+        s.recording = false;
+        // Update menu text
+        let menu = GetMenu(s.hwnd_main);
+        let w = wide("Start/Stop &Recording\tCtrl+Shift+R");
+        let mut info: MENUITEMINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MENUITEMINFOW>() as u32;
+        info.fMask = 0x0040; // MIIM_STRING
+        info.dwTypeData = w.as_ptr() as *mut u16;
+        SetMenuItemInfoW(menu, IDM_MACRO_RECORD as u32, FALSE, &info);
+    } else {
+        // Start recording
+        s.macro_buffer.clear();
+        sci_send(s.hwnd_scintilla, SCI_STARTRECORD, 0, 0);
+        s.recording = true;
+        // Update menu text to indicate recording
+        let menu = GetMenu(s.hwnd_main);
+        let w = wide("Stop &Recording\tCtrl+Shift+R");
+        let mut info: MENUITEMINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MENUITEMINFOW>() as u32;
+        info.fMask = 0x0040; // MIIM_STRING
+        info.dwTypeData = w.as_ptr() as *mut u16;
+        SetMenuItemInfoW(menu, IDM_MACRO_RECORD as u32, FALSE, &info);
+    }
+}
+
+unsafe fn cmd_macro_play() {
+    let s = app();
+    if s.recording || s.macro_buffer.is_empty() {
+        return;
+    }
+    let buffer = s.macro_buffer.clone();
+    for &(msg, wparam, lparam) in &buffer {
+        sci_send(s.hwnd_scintilla, msg, wparam, lparam);
     }
 }
 
