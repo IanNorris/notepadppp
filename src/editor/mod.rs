@@ -3,6 +3,7 @@ pub mod brackets;
 pub mod buffer;
 pub mod cursor;
 pub mod document;
+pub mod indent;
 pub mod macros;
 pub mod syntax;
 pub mod tab_manager;
