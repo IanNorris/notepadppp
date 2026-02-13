@@ -73,6 +73,10 @@ pub struct NotepadApp {
     show_macro_repeat_dialog: bool,
     /// Repeat count for macro playback
     macro_repeat_count: String,
+    /// Whether to show the Go to Line dialog
+    show_goto_line: bool,
+    /// Input for Go to Line dialog
+    goto_line_input: String,
     /// Whether to show the preferences panel
     show_preferences: bool,
     /// Application settings
@@ -144,6 +148,8 @@ impl NotepadApp {
             last_macro: None,
             show_macro_repeat_dialog: false,
             macro_repeat_count: String::from("1"),
+            show_goto_line: false,
+            goto_line_input: String::new(),
             show_preferences: false,
             app_settings: crate::io::settings::AppSettings::load(
                 &crate::io::settings::AppSettings::settings_path(),
@@ -206,6 +212,17 @@ impl NotepadApp {
     }
 
     // --- Actions ---
+
+    fn action_goto_line(&mut self) {
+        self.show_goto_line = true;
+        self.goto_line_input = String::new();
+    }
+
+    fn request_repaint_if_dialog(&self, ctx: &egui::Context) {
+        if self.show_goto_line || self.show_macro_repeat_dialog || self.show_preferences {
+            ctx.request_repaint();
+        }
+    }
 
     fn action_new(&mut self) {
         self.tab_manager.new_tab();
@@ -600,6 +617,11 @@ impl NotepadApp {
             }
             if ui.button("Find in Files...").clicked() {
                 // TODO: implement find in files dialog
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Go to Line...    Ctrl+G").clicked() {
+                self.action_goto_line();
                 ui.close_menu();
             }
             ui.separator();
@@ -1546,6 +1568,7 @@ impl NotepadApp {
         let f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && !i.modifiers.ctrl && !i.modifiers.shift);
         let shift_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.shift && !i.modifiers.ctrl);
         let ctrl_f2 = ctx.input(|i| i.key_pressed(egui::Key::F2) && i.modifiers.ctrl && !i.modifiers.shift);
+        let ctrl_g = ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.ctrl && !i.modifiers.shift);
 
         if ctrl_n { self.action_new(); }
         if ctrl_o { self.action_open(); }
@@ -1571,6 +1594,10 @@ impl NotepadApp {
         if ctrl_f2 { self.action_toggle_bookmark(); }
         if f2 { self.action_next_bookmark(); }
         if shift_f2 { self.action_prev_bookmark(); }
+        if ctrl_g {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::G));
+            self.action_goto_line();
+        }
     }
 }
 
@@ -1855,6 +1882,42 @@ impl eframe::App for NotepadApp {
                 });
         }
 
+        // Go to Line dialog
+        if self.show_goto_line {
+            let line_count = self.tab_manager.active_document().buffer.line_count();
+            let mut goto_target: Option<usize> = None;
+            let mut close = false;
+            egui::Window::new("Go to Line")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Line (1-{}):", line_count));
+                        let response = ui.text_edit_singleline(&mut self.goto_line_input);
+                        if !response.has_focus() {
+                            response.request_focus();
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Go").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            if let Ok(line_num) = self.goto_line_input.parse::<usize>() {
+                                goto_target = Some(line_num.saturating_sub(1).min(line_count.saturating_sub(1)));
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if let Some(target) = goto_target {
+                self.tab_manager.active_document_mut().cursor.set_position(target, 0);
+                self.show_goto_line = false;
+            } else if close {
+                self.show_goto_line = false;
+            }
+        }
+
         // Preferences window
         if self.show_preferences {
             let mut open = self.show_preferences;
@@ -1921,5 +1984,7 @@ impl eframe::App for NotepadApp {
                 });
             self.show_preferences = open;
         }
+
+        self.request_repaint_if_dialog(ctx);
     }
 }
