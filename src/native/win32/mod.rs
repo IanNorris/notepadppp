@@ -797,11 +797,10 @@ unsafe fn on_command(id: u16) {
         IDM_FILE_EXIT => {
             DestroyWindow(app().hwnd_main);
         }
-        // Placeholders
-        IDM_FILE_SAVE_SESSION | IDM_FILE_LOAD_SESSION
-        | IDM_FILE_EXPORT_HTML | IDM_FILE_EXPORT_RTF => {
-            show_todo("This feature is not yet implemented.");
-        }
+        IDM_FILE_SAVE_SESSION => cmd_save_session(),
+        IDM_FILE_LOAD_SESSION => cmd_load_session(),
+        IDM_FILE_EXPORT_HTML => cmd_export_html(),
+        IDM_FILE_EXPORT_RTF => cmd_export_rtf(),
 
         // ── Edit ──
         IDM_EDIT_UNDO => { sci_send(app().hwnd_scintilla, SCI_UNDO, 0, 0); }
@@ -857,7 +856,7 @@ unsafe fn on_command(id: u16) {
         IDM_SEARCH_FIND => { cmd_open_find_replace(false); }
         IDM_SEARCH_REPLACE => { cmd_open_find_replace(true); }
         IDM_SEARCH_FIND_IN_FILES => {
-            show_todo("Find in Files is not yet implemented.");
+            cmd_find_in_files_dialog();
         }
         IDM_SEARCH_SELECT_ALL_OCCURRENCES => { cmd_select_all_occurrences(); }
         IDM_SEARCH_GOTO_LINE => { cmd_goto_line(); }
@@ -903,9 +902,11 @@ unsafe fn on_command(id: u16) {
         IDM_MACRO_RECORD => { cmd_macro_toggle_record(); }
         IDM_MACRO_PLAY => { cmd_macro_play(); }
 
-        // ── Settings (placeholder) ──
-        IDM_SETTINGS_PREFERENCES | IDM_SETTINGS_SHORTCUTS => {
-            show_todo("Settings dialogs are not yet implemented.");
+        IDM_SETTINGS_PREFERENCES => cmd_preferences_dialog(),
+        IDM_SETTINGS_SHORTCUTS => {
+            let title = wide("Keyboard Shortcuts");
+            let text = wide("Keyboard shortcuts can be customized in a future update.");
+            MessageBoxW(app().hwnd_main, text.as_ptr(), title.as_ptr(), MB_OK | 0x40);
         }
 
         // ── Help ──
@@ -2765,12 +2766,613 @@ unsafe fn cmd_macro_play() {
     }
 }
 
-// ── Placeholder helper ──
+// ── Session Save/Load ──
 
-unsafe fn show_todo(msg: &str) {
-    let title = wide("Not Yet Implemented");
-    let text = wide(msg);
-    MessageBoxW(app().hwnd_main, text.as_ptr(), title.as_ptr(), MB_OK | 0x40);
+unsafe fn cmd_save_session() {
+    let s = app();
+    // Update current tab text
+    if !s.tabs.is_empty() {
+        s.tabs[s.active_tab].text = sci_get_text(s.hwnd_scintilla);
+    }
+
+    let mut filename = [0u16; 1024];
+    let filter = wide("Session Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0");
+    let title = wide("Save Session");
+
+    let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = s.hwnd_main;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = filename.as_mut_ptr();
+    ofn.nMaxFile = filename.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_OVERWRITEPROMPT;
+
+    if GetSaveFileNameW(&mut ofn) == 0 {
+        return;
+    }
+    let path_str = wchar_to_string(&filename);
+
+    let tabs: Vec<String> = s.tabs.iter().filter_map(|t| {
+        t.path.as_ref().map(|p| p.to_string_lossy().to_string())
+    }).collect();
+    let session = serde_json::json!({
+        "tabs": tabs,
+        "active": s.active_tab,
+    });
+    let _ = std::fs::write(&path_str, serde_json::to_string_pretty(&session).unwrap_or_default());
+}
+
+unsafe fn cmd_load_session() {
+    let mut filename = [0u16; 1024];
+    let filter = wide("Session Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0");
+    let title = wide("Load Session");
+
+    let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = app().hwnd_main;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = filename.as_mut_ptr();
+    ofn.nMaxFile = filename.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if GetOpenFileNameW(&mut ofn) == 0 {
+        return;
+    }
+    let path_str = wchar_to_string(&filename);
+
+    let Ok(content) = std::fs::read_to_string(&path_str) else { return };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else { return };
+
+    let Some(tabs_arr) = val.get("tabs").and_then(|v| v.as_array()) else { return };
+    let active = val.get("active").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+    cmd_close_all();
+
+    // Close the default Untitled tab that cmd_close_all creates
+    let s = app();
+    if !s.tabs.is_empty() {
+        s.tabs.remove(0);
+        SendMessageW(s.hwnd_tab, TCM_DELETEITEM, 0, 0);
+    }
+
+    for entry in tabs_arr {
+        if let Some(path) = entry.as_str() {
+            open_file_in_tab(path);
+        }
+    }
+
+    // If no tabs were opened, create an untitled one
+    if app().tabs.is_empty() {
+        cmd_new_tab();
+    }
+
+    let s = app();
+    let target = if active < s.tabs.len() { active } else { 0 };
+    SendMessageW(s.hwnd_tab, TCM_SETCURSEL, target, 0);
+    switch_tab(target);
+}
+
+// ── Export HTML/RTF ──
+
+unsafe fn cmd_export_html() {
+    let s = app();
+    if s.tabs.is_empty() { return; }
+
+    let text_bytes = sci_get_text(s.hwnd_scintilla);
+    let text = String::from_utf8_lossy(&text_bytes);
+    let lang_class = s.tabs[s.active_tab].language.to_lowercase().replace(' ', "-");
+
+    let html_escaped = text
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+body {{ background: #1e1e1e; color: #d4d4d4; margin: 0; padding: 16px; font-family: Consolas, monospace; }}
+pre {{ font-size: 11pt; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }}
+</style>
+</head>
+<body>
+<pre class="{lang_class}">{content}</pre>
+</body>
+</html>"#,
+        title = s.tabs[s.active_tab].title,
+        lang_class = lang_class,
+        content = html_escaped,
+    );
+
+    let mut filename = [0u16; 1024];
+    let filter = wide("HTML Files (*.html)\0*.html\0All Files (*.*)\0*.*\0\0");
+    let title = wide("Export as HTML");
+
+    let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = s.hwnd_main;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = filename.as_mut_ptr();
+    ofn.nMaxFile = filename.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_OVERWRITEPROMPT;
+
+    if GetSaveFileNameW(&mut ofn) == 0 { return; }
+    let path = wchar_to_string(&filename);
+    let _ = std::fs::write(&path, html.as_bytes());
+}
+
+unsafe fn cmd_export_rtf() {
+    let s = app();
+    if s.tabs.is_empty() { return; }
+
+    let text_bytes = sci_get_text(s.hwnd_scintilla);
+    let text = String::from_utf8_lossy(&text_bytes);
+
+    let mut rtf_body = String::new();
+    for ch in text.chars() {
+        match ch {
+            '\\' => rtf_body.push_str("\\\\"),
+            '{' => rtf_body.push_str("\\{"),
+            '}' => rtf_body.push_str("\\}"),
+            '\n' => rtf_body.push_str("\\par\n"),
+            '\r' => {} // skip CR, handled with LF
+            c if (c as u32) > 127 => {
+                rtf_body.push_str(&format!("\\u{}?", c as i16));
+            }
+            c => rtf_body.push(c),
+        }
+    }
+
+    let rtf = format!(
+        "{{\\rtf1\\ansi\\deff0{{\\fonttbl{{\\f0 Consolas;}}}}\\f0\\fs20 {rtf_body}}}",
+        rtf_body = rtf_body,
+    );
+
+    let mut filename = [0u16; 1024];
+    let filter = wide("RTF Files (*.rtf)\0*.rtf\0All Files (*.*)\0*.*\0\0");
+    let title = wide("Export as RTF");
+
+    let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = s.hwnd_main;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = filename.as_mut_ptr();
+    ofn.nMaxFile = filename.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_OVERWRITEPROMPT;
+
+    if GetSaveFileNameW(&mut ofn) == 0 { return; }
+    let path = wchar_to_string(&filename);
+    let _ = std::fs::write(&path, rtf.as_bytes());
+}
+
+// ── Find in Files Dialog ──
+
+const IDC_FIF_FIND_EDIT: i32 = 3001;
+const IDC_FIF_DIR_EDIT: i32 = 3002;
+const IDC_FIF_FILTER_EDIT: i32 = 3003;
+const IDC_FIF_FIND_ALL: i32 = 3004;
+const IDC_FIF_BROWSE: i32 = 3005;
+const IDC_FIF_MATCH_CASE: i32 = 3010;
+const IDC_FIF_WHOLE_WORD: i32 = 3011;
+const IDC_FIF_REGEX: i32 = 3012;
+const IDC_FIF_RECURSIVE: i32 = 3013;
+
+static mut FIF_DLG_HWND: HWND = std::ptr::null_mut();
+
+unsafe fn cmd_find_in_files_dialog() {
+    if !FIF_DLG_HWND.is_null() && IsWindow(FIF_DLG_HWND) != 0 {
+        SetForegroundWindow(FIF_DLG_HWND);
+        return;
+    }
+
+    let s = app();
+    let hinstance = GetModuleHandleW(std::ptr::null());
+
+    let class_name = wide("NPPPFindInFiles");
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfnWndProc: Some(fif_dlg_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: hinstance,
+        hIcon: std::ptr::null_mut(),
+        hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: class_name.as_ptr(),
+        hIconSm: std::ptr::null_mut(),
+    };
+    RegisterClassExW(&wc);
+
+    let title = wide("Find in Files");
+    let dlg = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        class_name.as_ptr(),
+        title.as_ptr(),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 480, 260,
+        s.hwnd_main,
+        std::ptr::null_mut(),
+        hinstance,
+        std::ptr::null(),
+    );
+    FIF_DLG_HWND = dlg;
+
+    let static_c = wide("STATIC");
+    let edit_c = wide("EDIT");
+    let btn_c = wide("BUTTON");
+
+    // Find what
+    let lbl = wide("Find what:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 12, 70, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), std::ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
+        85, 10, 375, 22, dlg,
+        IDC_FIF_FIND_EDIT as isize as HMENU, hinstance, std::ptr::null());
+
+    // Directory
+    let lbl = wide("Directory:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 42, 70, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+    // Pre-fill with the directory of the current file if available
+    let dir_default = {
+        let st = app();
+        if !st.tabs.is_empty() {
+            st.tabs[st.active_tab].path.as_ref()
+                .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_string()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+    let dir_w = wide(&dir_default);
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), dir_w.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
+        85, 40, 295, 22, dlg,
+        IDC_FIF_DIR_EDIT as isize as HMENU, hinstance, std::ptr::null());
+
+    let lbl = wide("Browse...");
+    CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        385, 39, 75, 24, dlg,
+        IDC_FIF_BROWSE as isize as HMENU, hinstance, std::ptr::null());
+
+    // Filter
+    let lbl = wide("Filter:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 72, 70, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+    let default_filter = wide("*.*");
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), default_filter.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0080,
+        85, 70, 375, 22, dlg,
+        IDC_FIF_FILTER_EDIT as isize as HMENU, hinstance, std::ptr::null());
+
+    // Checkboxes
+    let y_chk = 102;
+    let mk_chk = |text: &str, x: i32, y: i32, id: i32, checked: bool| {
+        let w = wide(text);
+        let style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003;
+        let h = CreateWindowExW(0, btn_c.as_ptr(), w.as_ptr(), style,
+            x, y, 130, 20, dlg, id as isize as HMENU, hinstance, std::ptr::null());
+        if checked {
+            SendMessageW(h, 0x00F1, 1, 0);
+        }
+    };
+    mk_chk("Match case", 10, y_chk, IDC_FIF_MATCH_CASE, false);
+    mk_chk("Whole word", 145, y_chk, IDC_FIF_WHOLE_WORD, false);
+    mk_chk("Regular expression", 280, y_chk, IDC_FIF_REGEX, false);
+    mk_chk("Recursive", 10, y_chk + 24, IDC_FIF_RECURSIVE, true);
+
+    // Find All button
+    let lbl = wide("Find All");
+    CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0001,
+        190, y_chk + 55, 100, 30, dlg,
+        IDC_FIF_FIND_ALL as isize as HMENU, hinstance, std::ptr::null());
+
+    SetFocus(GetDlgItem(dlg, IDC_FIF_FIND_EDIT));
+}
+
+unsafe fn fif_get_text(id: i32) -> String {
+    let h = GetDlgItem(FIF_DLG_HWND, id);
+    let mut buf = [0u16; 1024];
+    GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32);
+    wchar_to_string(&buf)
+}
+
+unsafe fn cmd_fif_execute() {
+    let query = fif_get_text(IDC_FIF_FIND_EDIT);
+    let dir = fif_get_text(IDC_FIF_DIR_EDIT);
+    let filter = fif_get_text(IDC_FIF_FILTER_EDIT);
+
+    if query.is_empty() || dir.is_empty() { return; }
+
+    let case_sensitive = SendMessageW(GetDlgItem(FIF_DLG_HWND, IDC_FIF_MATCH_CASE), 0x00F0, 0, 0) != 0;
+    let _whole_word = SendMessageW(GetDlgItem(FIF_DLG_HWND, IDC_FIF_WHOLE_WORD), 0x00F0, 0, 0) != 0;
+    let use_regex = SendMessageW(GetDlgItem(FIF_DLG_HWND, IDC_FIF_REGEX), 0x00F0, 0, 0) != 0;
+    let recursive = SendMessageW(GetDlgItem(FIF_DLG_HWND, IDC_FIF_RECURSIVE), 0x00F0, 0, 0) != 0;
+
+    let dir_path = std::path::Path::new(&dir);
+    match crate::search::find_in_files::FindInFiles::search(
+        dir_path, &query, &filter, recursive, case_sensitive, use_regex,
+    ) {
+        Ok(results) => {
+            let mut output = String::new();
+            let mut total = 0usize;
+            for file_result in &results {
+                for m in &file_result.matches {
+                    if total < 50 {
+                        output.push_str(&format!(
+                            "{}:{}: {}\n",
+                            file_result.path.display(),
+                            m.line + 1,
+                            m.line_text.trim_end(),
+                        ));
+                    }
+                    total += 1;
+                }
+            }
+            if total == 0 {
+                output = "No matches found.".to_string();
+            } else if total > 50 {
+                output.push_str(&format!("\n... and {} more matches", total - 50));
+            }
+            let header = format!("Found {} match(es) in {} file(s):\n\n", total, results.len());
+            let msg_text = wide(&format!("{header}{output}"));
+            let msg_title = wide("Find in Files Results");
+            MessageBoxW(app().hwnd_main, msg_text.as_ptr(), msg_title.as_ptr(), MB_OK);
+        }
+        Err(e) => {
+            let msg = wide(&format!("Search error: {e}"));
+            let title = wide("Find in Files");
+            MessageBoxW(app().hwnd_main, msg.as_ptr(), title.as_ptr(), MB_OK | 0x10);
+        }
+    }
+}
+
+unsafe fn fif_browse_directory() {
+    // Use a simple folder selection via a Save dialog trick:
+    // Open a file dialog and extract the directory from it.
+    // Alternatively, use SHBrowseForFolderW — but that requires shell32 imports.
+    // Simplest approach: use GetOpenFileNameW and strip the filename.
+    let mut filename = [0u16; 1024];
+    let filter = wide("All Files (*.*)\0*.*\0\0");
+    let title = wide("Select any file in the target directory");
+
+    let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+    ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    ofn.hwndOwner = FIF_DLG_HWND;
+    ofn.lpstrFilter = filter.as_ptr();
+    ofn.lpstrFile = filename.as_mut_ptr();
+    ofn.nMaxFile = filename.len() as u32;
+    ofn.lpstrTitle = title.as_ptr();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+
+    if GetOpenFileNameW(&mut ofn) != 0 {
+        let path = wchar_to_string(&filename);
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let dir_str = parent.to_string_lossy();
+            let w = wide(&dir_str);
+            SetWindowTextW(GetDlgItem(FIF_DLG_HWND, IDC_FIF_DIR_EDIT), w.as_ptr());
+        }
+    }
+}
+
+unsafe extern "system" fn fif_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_COMMAND => {
+            let cmd = (wparam & 0xFFFF) as i32;
+            match cmd {
+                IDC_FIF_FIND_ALL => { cmd_fif_execute(); }
+                IDC_FIF_BROWSE => { fif_browse_directory(); }
+                _ => {}
+            }
+            0
+        }
+        WM_CLOSE => {
+            DestroyWindow(hwnd);
+            FIF_DLG_HWND = std::ptr::null_mut();
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+// ── Settings / Preferences Dialog ──
+
+const IDC_PREF_FONT_SIZE: i32 = 4001;
+const IDC_PREF_TAB_SIZE: i32 = 4002;
+const IDC_PREF_USE_SPACES: i32 = 4003;
+const IDC_PREF_FOLD_MARGIN: i32 = 4004;
+const IDC_PREF_OK: i32 = 4010;
+const IDC_PREF_CANCEL: i32 = 4011;
+
+static mut PREF_DLG_HWND: HWND = std::ptr::null_mut();
+
+unsafe fn cmd_preferences_dialog() {
+    if !PREF_DLG_HWND.is_null() && IsWindow(PREF_DLG_HWND) != 0 {
+        SetForegroundWindow(PREF_DLG_HWND);
+        return;
+    }
+
+    let s = app();
+    let hinstance = GetModuleHandleW(std::ptr::null());
+
+    let class_name = wide("NPPPPreferences");
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfnWndProc: Some(pref_dlg_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: hinstance,
+        hIcon: std::ptr::null_mut(),
+        hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
+        hbrBackground: (COLOR_BTNFACE + 1) as *mut _,
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: class_name.as_ptr(),
+        hIconSm: std::ptr::null_mut(),
+    };
+    RegisterClassExW(&wc);
+
+    let title = wide("Preferences");
+    let dlg = CreateWindowExW(
+        WS_EX_DLGMODALFRAME,
+        class_name.as_ptr(),
+        title.as_ptr(),
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 320, 230,
+        s.hwnd_main,
+        std::ptr::null_mut(),
+        hinstance,
+        std::ptr::null(),
+    );
+    PREF_DLG_HWND = dlg;
+
+    let static_c = wide("STATIC");
+    let edit_c = wide("EDIT");
+    let btn_c = wide("BUTTON");
+
+    // Get current values
+    let cur_font_size = sci_send(s.hwnd_scintilla, SCI_STYLEGETSIZE, STYLE_DEFAULT, 0) as i32;
+    let cur_tab_width = sci_send(s.hwnd_scintilla, SCI_GETTABWIDTH, 0, 0) as i32;
+    let cur_use_tabs = sci_send(s.hwnd_scintilla, SCI_GETUSETABS, 0, 0) != 0;
+    let cur_fold_margin = sci_send(s.hwnd_scintilla, SCI_GETMARGINWIDTHN, 2, 0) > 0;
+
+    // Font size
+    let lbl = wide("Font size:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 14, 90, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+    let val = wide(&cur_font_size.to_string());
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), val.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x2000,
+        110, 12, 60, 22, dlg,
+        IDC_PREF_FONT_SIZE as isize as HMENU, hinstance, std::ptr::null());
+
+    // Tab size
+    let lbl = wide("Tab size:");
+    CreateWindowExW(0, static_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE, 10, 44, 90, 20, dlg,
+        std::ptr::null_mut(), hinstance, std::ptr::null());
+    let val = wide(&cur_tab_width.to_string());
+    CreateWindowExW(WS_EX_CLIENTEDGE, edit_c.as_ptr(), val.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x2000,
+        110, 42, 60, 22, dlg,
+        IDC_PREF_TAB_SIZE as isize as HMENU, hinstance, std::ptr::null());
+
+    // Use spaces for tabs
+    let lbl = wide("Use spaces for tabs");
+    let h = CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003,
+        10, 76, 180, 20, dlg,
+        IDC_PREF_USE_SPACES as isize as HMENU, hinstance, std::ptr::null());
+    if !cur_use_tabs {
+        SendMessageW(h, 0x00F1, 1, 0);
+    }
+
+    // Show fold margin
+    let lbl = wide("Show fold margin");
+    let h = CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003,
+        10, 102, 180, 20, dlg,
+        IDC_PREF_FOLD_MARGIN as isize as HMENU, hinstance, std::ptr::null());
+    if cur_fold_margin {
+        SendMessageW(h, 0x00F1, 1, 0);
+    }
+
+    // OK / Cancel
+    let lbl = wide("OK");
+    CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0001,
+        60, 145, 80, 28, dlg,
+        IDC_PREF_OK as isize as HMENU, hinstance, std::ptr::null());
+
+    let lbl = wide("Cancel");
+    CreateWindowExW(0, btn_c.as_ptr(), lbl.as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        170, 145, 80, 28, dlg,
+        IDC_PREF_CANCEL as isize as HMENU, hinstance, std::ptr::null());
+
+    EnableWindow(s.hwnd_main, FALSE);
+}
+
+unsafe fn pref_apply() {
+    let dlg = PREF_DLG_HWND;
+    let s = app();
+
+    // Font size
+    let mut buf = [0u16; 32];
+    GetWindowTextW(GetDlgItem(dlg, IDC_PREF_FONT_SIZE), buf.as_mut_ptr(), buf.len() as i32);
+    let text = wchar_to_string(&buf);
+    if let Ok(size) = text.trim().parse::<isize>() {
+        if size >= 6 && size <= 72 {
+            sci_send(s.hwnd_scintilla, SCI_STYLESETSIZE, STYLE_DEFAULT, size);
+            sci_send(s.hwnd_scintilla, SCI_STYLECLEARALL, 0, 0);
+        }
+    }
+
+    // Tab size
+    GetWindowTextW(GetDlgItem(dlg, IDC_PREF_TAB_SIZE), buf.as_mut_ptr(), buf.len() as i32);
+    let text = wchar_to_string(&buf);
+    if let Ok(size) = text.trim().parse::<usize>() {
+        if size >= 1 && size <= 16 {
+            sci_send(s.hwnd_scintilla, SCI_SETTABWIDTH, size, 0);
+        }
+    }
+
+    // Use spaces for tabs (checkbox checked = use spaces = SCI_SETUSETABS(false))
+    let use_spaces = SendMessageW(GetDlgItem(dlg, IDC_PREF_USE_SPACES), 0x00F0, 0, 0) != 0;
+    sci_send(s.hwnd_scintilla, SCI_SETUSETABS, if use_spaces { 0 } else { 1 }, 0);
+
+    // Fold margin
+    let show_fold = SendMessageW(GetDlgItem(dlg, IDC_PREF_FOLD_MARGIN), 0x00F0, 0, 0) != 0;
+    sci_send(s.hwnd_scintilla, SCI_SETMARGINWIDTHN, 2, if show_fold { 16 } else { 0 });
+}
+
+unsafe extern "system" fn pref_dlg_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_COMMAND => {
+            let cmd = (wparam & 0xFFFF) as i32;
+            match cmd {
+                IDC_PREF_OK => {
+                    pref_apply();
+                    EnableWindow(app().hwnd_main, TRUE);
+                    SetForegroundWindow(app().hwnd_main);
+                    DestroyWindow(hwnd);
+                    PREF_DLG_HWND = std::ptr::null_mut();
+                }
+                IDC_PREF_CANCEL => {
+                    EnableWindow(app().hwnd_main, TRUE);
+                    SetForegroundWindow(app().hwnd_main);
+                    DestroyWindow(hwnd);
+                    PREF_DLG_HWND = std::ptr::null_mut();
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_CLOSE => {
+            EnableWindow(app().hwnd_main, TRUE);
+            SetForegroundWindow(app().hwnd_main);
+            DestroyWindow(hwnd);
+            PREF_DLG_HWND = std::ptr::null_mut();
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
 }
 
 // ── Status bar ──

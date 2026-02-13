@@ -78,6 +78,15 @@ pub const SC_WRAP_WORD: i32 = 1;
 
 // Tab
 pub const SCI_SETTABWIDTH: u32 = 2036;
+pub const SCI_GETTABWIDTH: u32 = 2121;
+pub const SCI_SETUSETABS: u32 = 2124;
+pub const SCI_GETUSETABS: u32 = 2125;
+
+// Style get
+pub const SCI_STYLEGETSIZE: u32 = 2485;
+
+// Margin get
+pub const SCI_GETMARGINWIDTHN: u32 = 2243;
 
 // Lexer
 pub const SCI_SETILEXER: u32 = 4033;
