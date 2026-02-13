@@ -661,7 +661,7 @@ unsafe fn create_accelerators() -> HACCEL {
     const FSHIFT: u8 = 4;
     const FCONTROL: u8 = 8;
 
-    #[repr(C, packed)]
+    #[repr(C)]
     #[derive(Copy, Clone)]
     struct ACCEL {
         f_virt: u8,
@@ -1054,7 +1054,7 @@ unsafe fn apply_lexer_for_tab(idx: usize) {
         let lexer = CreateLexer(cname.as_ptr());
         if !lexer.is_null() {
             sci_send(s.hwnd_scintilla, SCI_SETILEXER, 0, lexer as isize);
-            // Force re-colourise
+            sci_setup_lexer_styles(s.hwnd_scintilla, name);
             let len = sci_send(s.hwnd_scintilla, SCI_GETLENGTH, 0, 0);
             sci_send(s.hwnd_scintilla, SCI_COLOURISE, 0, len);
         }
@@ -1335,6 +1335,7 @@ unsafe fn cmd_set_language(idx: usize) {
         let lexer = CreateLexer(cname.as_ptr());
         if !lexer.is_null() {
             sci_send(s.hwnd_scintilla, SCI_SETILEXER, 0, lexer as isize);
+            sci_setup_lexer_styles(s.hwnd_scintilla, lexer_name);
             let len = sci_send(s.hwnd_scintilla, SCI_GETLENGTH, 0, 0);
             sci_send(s.hwnd_scintilla, SCI_COLOURISE, 0, len);
         }

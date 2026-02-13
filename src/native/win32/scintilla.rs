@@ -32,6 +32,7 @@ pub const SCI_STYLESETFORE: u32 = 2051;
 pub const SCI_STYLESETBACK: u32 = 2052;
 pub const SCI_STYLESETSIZE: u32 = 2055;
 pub const SCI_STYLESETFONT: u32 = 2056;
+pub const SCI_STYLESETBOLD: u32 = 2053;
 pub const STYLE_DEFAULT: usize = 32;
 pub const STYLE_LINENUMBER: usize = 33;
 
@@ -215,6 +216,9 @@ pub const SCI_STOPRECORD: u32 = 3002;
 // Read-only
 pub const SCI_SETREADONLY: u32 = 2171;
 
+// Keywords
+pub const SCI_SETKEYWORDS: u32 = 4005;
+
 // Helper: make an RGB color for Scintilla (0x00BBGGRR)
 pub const fn rgb(r: u8, g: u8, b: u8) -> i32 {
     (r as i32) | ((g as i32) << 8) | ((b as i32) << 16)
@@ -279,6 +283,43 @@ pub unsafe fn sci_configure_dark(hwnd: HWND) {
     sci_send(hwnd, SCI_STYLESETBACK, STYLE_DEFAULT, bg as isize);
     sci_send(hwnd, SCI_STYLECLEARALL, 0, 0);
 
+    // Syntax highlighting colors (common across most lexers)
+    // Style 1: Comments
+    sci_send(hwnd, SCI_STYLESETFORE, 1, rgb(106, 153, 85) as isize);
+    // Style 2: Comments (line)
+    sci_send(hwnd, SCI_STYLESETFORE, 2, rgb(106, 153, 85) as isize);
+    // Style 3: Doc comments
+    sci_send(hwnd, SCI_STYLESETFORE, 3, rgb(106, 153, 85) as isize);
+    // Style 4: Numbers
+    sci_send(hwnd, SCI_STYLESETFORE, 4, rgb(181, 206, 168) as isize);
+    // Style 5: Keywords
+    sci_send(hwnd, SCI_STYLESETFORE, 5, rgb(86, 156, 214) as isize);
+    sci_send(hwnd, SCI_STYLESETBOLD, 5, 1);
+    // Style 6: Strings
+    sci_send(hwnd, SCI_STYLESETFORE, 6, rgb(206, 145, 120) as isize);
+    // Style 7: Characters
+    sci_send(hwnd, SCI_STYLESETFORE, 7, rgb(206, 145, 120) as isize);
+    // Style 8: UUIDs / special
+    sci_send(hwnd, SCI_STYLESETFORE, 8, rgb(220, 220, 170) as isize);
+    // Style 9: Preprocessor
+    sci_send(hwnd, SCI_STYLESETFORE, 9, rgb(155, 155, 155) as isize);
+    // Style 10: Operators
+    sci_send(hwnd, SCI_STYLESETFORE, 10, rgb(212, 212, 212) as isize);
+    // Style 11: Identifiers
+    sci_send(hwnd, SCI_STYLESETFORE, 11, rgb(156, 220, 254) as isize);
+    // Style 12: Unclosed strings
+    sci_send(hwnd, SCI_STYLESETFORE, 12, rgb(206, 145, 120) as isize);
+    // Style 13-15: Additional keywords/types
+    sci_send(hwnd, SCI_STYLESETFORE, 13, rgb(78, 201, 176) as isize);
+    sci_send(hwnd, SCI_STYLESETFORE, 14, rgb(220, 220, 170) as isize);
+    sci_send(hwnd, SCI_STYLESETFORE, 15, rgb(197, 134, 192) as isize);
+    // Style 16: Secondary keywords (types, built-ins)
+    sci_send(hwnd, SCI_STYLESETFORE, 16, rgb(78, 201, 176) as isize);
+    // Style 17-19: More keyword groups
+    sci_send(hwnd, SCI_STYLESETFORE, 17, rgb(220, 220, 170) as isize);
+    sci_send(hwnd, SCI_STYLESETFORE, 18, rgb(197, 134, 192) as isize);
+    sci_send(hwnd, SCI_STYLESETFORE, 19, rgb(86, 156, 214) as isize);
+
     // Line number margin
     sci_send(hwnd, SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER as isize);
     sci_send(hwnd, SCI_SETMARGINWIDTHN, 0, 48);
@@ -324,6 +365,33 @@ pub unsafe fn sci_configure_dark(hwnd: HWND) {
 
     // CRLF by default (Windows)
     sci_send(hwnd, SCI_SETEOLMODE, SC_EOL_CRLF as usize, 0);
+}
+
+/// Set keywords and syntax colors for a given lexer.
+pub unsafe fn sci_setup_lexer_styles(hwnd: HWND, lexer_name: &str) {
+    // Set keyword list 0 (primary keywords) for common languages
+    let keywords: &[u8] = match lexer_name {
+        "rust" => b"as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while yield abstract become box do final macro override priv typeof unsized virtual\0",
+        "cpp" => b"alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while abstract boolean byte extends final finally implements import instanceof interface native package strictfp super synchronized throws transient let var const function of in class yield async await undefined null NaN Infinity\0",
+        "python" => b"False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield\0",
+        "ruby" => b"BEGIN END __ENCODING__ __END__ __FILE__ __LINE__ alias and begin break case class def defined? do else elsif end ensure false for if in module next nil not or redo rescue retry return self super then true undef unless until when while yield\0",
+        "perl" => b"__DATA__ __END__ __FILE__ __LINE__ __PACKAGE__ and bless caller chomp chop cmp continue CORE defined delete die do dump each else elsif eq eval exists for foreach format ge goto grep gt hex if import join keys last le length local lt map my ne next no not oct open or our pack package pop pos print printf prototype push q qq quotemeta qw qx redo ref require return reverse scalar seek shift sort splice split sprintf study sub substr tie tied uc ucfirst undef unless unlink unshift untie until use values wantarray warn while write\0",
+        "bash" => b"alias bg bind break builtin caller case cd command compgen complete continue declare dirs disown do done echo elif else enable esac eval exec exit export false fc fg fi for function getopts hash help history if in jobs kill let local logout mapfile popd printf pushd pwd read readarray readonly return select set shift shopt source suspend test then time times trap true type typeset ulimit umask unalias unset until wait while\0",
+        "sql" => b"add all alter and any as asc authorization backup begin between break browse bulk by cascade case check checkpoint close clustered coalesce column commit compute constraint contains continue convert create cross current current_date current_time cursor database dbcc deallocate declare default delete deny desc disk distinct distributed double drop dump else end errlvl escape except exec execute exists exit external fetch file fillfactor for foreign from full function goto grant group having holdlock identity if in index inner insert intersect into is join key kill left like lineno load merge national nocheck nonclustered not null of off offsets on open option or order outer over percent pivot plan primary print proc procedure public raiserror read readtext reconfigure references replication restore restrict return revert revoke right rollback rowcount rowguidcol rule save schema select session_user set setuser shutdown some statistics table tablesample textsize then to top tran transaction trigger truncate union unique unpivot update updatetext use user values varying view waitfor when where while with writetext\0",
+        "lua" => b"and break do else elseif end false for function goto if in local nil not or repeat return then true until while\0",
+        "json" => b"false null true\0",
+        _ => b"\0",
+    };
+    sci_send(hwnd, SCI_SETKEYWORDS, 0, keywords.as_ptr() as isize);
+
+    // Set keyword list 1 (secondary keywords / types) for some languages
+    let keywords2: &[u8] = match lexer_name {
+        "rust" => b"i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec Option Result Box Rc Arc Cell RefCell HashMap HashSet BTreeMap BTreeSet VecDeque LinkedList Some None Ok Err println eprintln format vec todo unimplemented unreachable panic assert assert_eq assert_ne cfg test derive Debug Clone Copy Default PartialEq Eq PartialOrd Ord Hash Display From Into TryFrom TryInto AsRef AsMut Iterator IntoIterator Send Sync Sized Unpin Drop Fn FnMut FnOnce Future\0",
+        "cpp" => b"int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t size_t ptrdiff_t intptr_t uintptr_t wchar_t string vector map set list queue stack array shared_ptr unique_ptr weak_ptr optional variant tuple pair any bitset deque priority_queue unordered_map unordered_set span string_view byte FILE errno stdin stdout stderr NULL EOF SEEK_SET SEEK_CUR SEEK_END EXIT_SUCCESS EXIT_FAILURE\0",
+        "python" => b"int float complex bool str bytes bytearray list tuple range dict set frozenset type object Exception BaseException ArithmeticError BufferError EOFError FileExistsError FileNotFoundError ImportError IndexError KeyError MemoryError NameError NotImplementedError OSError OverflowError PermissionError RuntimeError StopIteration SyntaxError SystemError TypeError ValueError ZeroDivisionError print input len range enumerate zip map filter sorted reversed any all min max sum abs round open isinstance issubclass hasattr getattr setattr delattr dir vars super property staticmethod classmethod\0",
+        _ => b"\0",
+    };
+    sci_send(hwnd, SCI_SETKEYWORDS, 1, keywords2.as_ptr() as isize);
 }
 
 /// Map file extension to lexer name for CreateLexer.
