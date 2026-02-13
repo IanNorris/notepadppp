@@ -345,11 +345,16 @@ Syntax highlighting for 80+ languages (via syntect) including:
 ## Phase 11: System Integration
 
 ### 11.1 Windows Shell Integration
-- [ ] "Open with Notepad+++" context menu entry
-- [ ] File extension associations
-- [ ] Open from command line with arguments
-- [ ] Single instance mode (reuse running window)
-- [ ] Command line options: goto line, encoding, language, etc.
+- [x] "Open with Notepad+++" context menu entry
+- [x] File extension associations
+- [x] Open from command line with arguments
+- [x] Single instance mode (reuse running window)
+- [x] Command line options: goto line, encoding, language, etc.
+- [x] NSIS installer with shell integration
+- [x] PowerShell registration scripts
+- [x] Registry (.reg) file generation
+- [x] Linux .desktop file and xdg-mime integration
+- [x] macOS Info.plist document types generation
 
 ### 11.2 Run / Execute
 - [ ] Run current file in associated program
