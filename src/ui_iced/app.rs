@@ -7,6 +7,7 @@ use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
 use crate::search::{SearchEngine, SearchMatch, SearchMode};
 
+use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
 use super::theme::AppColors;
 
@@ -229,6 +230,9 @@ pub struct NotepadIced {
     // Macros
     pub macro_recorder: MacroRecorder,
     pub last_macro: Option<crate::editor::macros::Macro>,
+
+    // Syntax highlighting
+    pub file_extension: String,
 }
 
 impl Default for NotepadIced {
@@ -263,6 +267,7 @@ impl Default for NotepadIced {
             font_size: 14.0,
             macro_recorder: MacroRecorder::new(),
             last_macro: None,
+            file_extension: String::new(),
         }
     }
 }
@@ -341,6 +346,10 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         ),
         Message::FileOpened(result) => {
             if let Ok((content, path)) = result {
+                // Extract file extension for syntax highlighting
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    state.file_extension = ext.to_lowercase();
+                }
                 match state.tab_manager.open_file(path) {
                     Ok(idx) => {
                         let doc = state.tab_manager.get_document(idx).unwrap();
@@ -400,6 +409,16 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::SelectTab(idx) => {
             if idx < state.tab_manager.tab_count() {
                 state.tab_manager.set_active(idx);
+                // Update file extension from the newly active tab's path
+                if let Some(path) = &state.tab_manager.active_document().path {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        state.file_extension = ext.to_lowercase();
+                    } else {
+                        state.file_extension.clear();
+                    }
+                } else {
+                    state.file_extension.clear();
+                }
             }
             Task::none()
         }
@@ -950,7 +969,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Language ──
         Message::SetLanguage(lang) => {
-            state.tab_manager.active_document_mut().language = lang;
+            state.tab_manager.active_document_mut().language = lang.clone();
+            // Try to find an extension for this language in syntect
+            if let Some(ext) = super::highlighter::extension_for_language(&lang) {
+                state.file_extension = ext;
+            }
             Task::none()
         }
 
@@ -1595,7 +1618,14 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         let editor = text_editor(&tc.content)
             .on_action(Message::EditorAction)
             .size(state.font_size)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .highlight_with::<SyntectHighlighter>(
+                SyntectSettings {
+                    extension: state.file_extension.clone(),
+                    theme: "base16-ocean.dark".to_string(),
+                },
+                |highlight, _theme| highlight.to_format(),
+            );
 
         container(editor)
             .width(Length::Fill)
