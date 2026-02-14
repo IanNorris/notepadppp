@@ -1,5 +1,5 @@
 use iced::keyboard;
-use iced::widget::{button, column, container, row, scrollable, text, text_editor};
+use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Encoding, LineEnding};
@@ -1317,14 +1317,6 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
 
-    let dropdown: Element<'_, Message> = if let Some(ref menu_name) = state.active_menu {
-        scrollable(menu_bar::view_dropdown(state, menu_name))
-            .height(Length::Shrink)
-            .into()
-    } else {
-        column![].into()
-    };
-
     let search: Element<'_, Message> = if state.show_find {
         super::search_panel::view_search_panel(state)
     } else {
@@ -1346,16 +1338,56 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let tab_bar = view_tab_bar(state);
     let editor = view_editor(state);
 
-    let mut content = column![menu_bar, dropdown, search, goto, about, tab_bar, editor];
+    let mut base_content = column![menu_bar, search, goto, about, tab_bar, editor];
 
     if state.show_status_bar {
-        content = content.push(view_status_bar(state));
+        base_content = base_content.push(view_status_bar(state));
     }
 
-    container(content)
+    let base: Element<'_, Message> = container(base_content)
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
+        .into();
+
+    // If a dropdown menu is open, overlay it on top using a Stack
+    if let Some(ref menu_name) = state.active_menu {
+        let dropdown = scrollable(menu_bar::view_dropdown(state, menu_name))
+            .height(Length::Shrink);
+
+        // Transparent click-catcher that closes the menu when clicking outside
+        let click_catcher: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press(Message::MenuClose)
+        .into();
+
+        // Position dropdown at top-left, below the menu bar (~26px)
+        let dropdown_overlay: Element<'_, Message> = container(
+            opaque(
+                container(dropdown)
+                    .max_height(500)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(super::theme::AppColors::TAB_BAR_BG)),
+                        border: iced::Border {
+                            color: iced::Color::from_rgb(0.3, 0.3, 0.35),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    }),
+            ),
+        )
+        .padding(iced::Padding { top: 26.0, right: 0.0, bottom: 0.0, left: 0.0 })
+        .width(Length::Shrink)
+        .height(Length::Shrink)
+        .into();
+
+        stack![base, click_catcher, dropdown_overlay].into()
+    } else {
+        base
+    }
 }
 
 pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
