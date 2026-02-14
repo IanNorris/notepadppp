@@ -3,7 +3,9 @@ use iced::widget::{button, column, container, row, scrollable, text, text_editor
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Encoding, LineEnding};
+use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
+use crate::search::{SearchEngine, SearchMatch, SearchMode};
 
 use super::menu_bar;
 use super::theme::AppColors;
@@ -151,6 +153,33 @@ pub enum Message {
 
     // Help
     ShowAbout,
+    CloseAbout,
+
+    // Search panel
+    FindQueryChanged(String),
+    ReplaceTextChanged(String),
+    ToggleCaseSensitive,
+    ToggleWholeWord,
+    ToggleRegex,
+    FindNext,
+    FindPrev,
+    ReplaceNext,
+    ReplaceAll,
+    CloseSearch,
+    ClickSearchResult(usize),
+
+    // Go to line
+    GotoLineInputChanged(String),
+    GotoLineConfirm,
+    GotoLineClose,
+
+    // Async results
+    SessionFileChosen(Result<std::path::PathBuf, String>),
+    ExportSaved(Result<(), String>),
+    CompareFileLoaded(Result<String, String>),
+
+    // Keyboard
+    EscapePressed,
 }
 
 pub struct NotepadIced {
@@ -173,6 +202,31 @@ pub struct NotepadIced {
 
     // Session
     pub auto_restore_session: bool,
+
+    // Search
+    pub show_find: bool,
+    pub show_replace: bool,
+    pub search_query: String,
+    pub replace_text: String,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    pub use_regex: bool,
+    pub search_matches: Vec<SearchMatch>,
+    pub current_match_index: Option<usize>,
+
+    // Go to line
+    pub show_goto_line: bool,
+    pub goto_line_input: String,
+
+    // About
+    pub show_about: bool,
+
+    // Zoom
+    pub font_size: f32,
+
+    // Macros
+    pub macro_recorder: MacroRecorder,
+    pub last_macro: Option<crate::editor::macros::Macro>,
 }
 
 impl Default for NotepadIced {
@@ -191,6 +245,21 @@ impl Default for NotepadIced {
             show_csv_viewer: false,
             show_hex_viewer: false,
             auto_restore_session: false,
+            show_find: false,
+            show_replace: false,
+            search_query: String::new(),
+            replace_text: String::new(),
+            case_sensitive: false,
+            whole_word: false,
+            use_regex: false,
+            search_matches: Vec::new(),
+            current_match_index: None,
+            show_goto_line: false,
+            goto_line_input: String::new(),
+            show_about: false,
+            font_size: 14.0,
+            macro_recorder: MacroRecorder::new(),
+            last_macro: None,
         }
     }
 }
@@ -205,11 +274,19 @@ pub fn title(state: &NotepadIced) -> String {
 }
 
 pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
-    // Close menu for most actions (except MenuToggle/MenuClose/EditorAction)
+    // Close menu for most actions (except MenuToggle/MenuClose/EditorAction and dialog-internal messages)
     let should_close_menu = !matches!(
         message,
         Message::MenuToggle(_) | Message::MenuClose | Message::EditorAction(_)
             | Message::FileOpened(_) | Message::FileSaved(_)
+            | Message::FindQueryChanged(_) | Message::ReplaceTextChanged(_)
+            | Message::ToggleCaseSensitive | Message::ToggleWholeWord | Message::ToggleRegex
+            | Message::FindNext | Message::FindPrev | Message::ReplaceNext | Message::ReplaceAll
+            | Message::CloseSearch | Message::ClickSearchResult(_)
+            | Message::GotoLineInputChanged(_) | Message::GotoLineConfirm | Message::GotoLineClose
+            | Message::CloseAbout
+            | Message::SessionFileChosen(_) | Message::ExportSaved(_) | Message::CompareFileLoaded(_)
+            | Message::EscapePressed
     );
     if should_close_menu {
         state.active_menu = None;
@@ -373,24 +450,86 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SaveSession => {
-            log::info!("Save session requested (not yet wired)");
+            use crate::io::session;
+            let sess = session::capture_session(&state.tab_manager, "session");
+            if let Some(config_dir) = dirs::config_dir() {
+                let dir = config_dir.join("notepadppp").join("sessions");
+                let _ = std::fs::create_dir_all(&dir);
+                let path = dir.join("session.json");
+                let _ = session::save_session(&sess, &path);
+            }
             Task::none()
         }
         Message::LoadSession => {
-            log::info!("Load session requested (not yet wired)");
-            Task::none()
+            Task::perform(
+                async {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .add_filter("Session", &["json"])
+                        .set_title("Load Session")
+                        .pick_file()
+                        .await;
+                    match handle {
+                        Some(h) => Ok(h.path().to_path_buf()),
+                        None => Err("Cancelled".to_string()),
+                    }
+                },
+                Message::SessionFileChosen,
+            )
         }
         Message::ToggleAutoRestore => {
             state.auto_restore_session = !state.auto_restore_session;
             Task::none()
         }
         Message::ExportHtml => {
-            log::info!("Export HTML requested");
-            Task::none()
+            let text = get_buffer_text(state);
+            let doc = state.tab_manager.active_document();
+            let ext = doc
+                .path
+                .as_ref()
+                .and_then(|p| p.extension())
+                .and_then(|e| e.to_str())
+                .unwrap_or("txt")
+                .to_string();
+            let highlighter = crate::editor::syntax::SyntaxHighlighter::new();
+            let html = crate::tools::export::export_html(&text, &ext, &highlighter);
+            Task::perform(
+                async move {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .add_filter("HTML", &["html"])
+                        .set_title("Export as HTML")
+                        .save_file()
+                        .await;
+                    match handle {
+                        Some(h) => {
+                            let path = h.path().to_path_buf();
+                            std::fs::write(&path, &html).map_err(|e| e.to_string())
+                        }
+                        None => Err("Cancelled".to_string()),
+                    }
+                },
+                Message::ExportSaved,
+            )
         }
         Message::ExportRtf => {
-            log::info!("Export RTF requested");
-            Task::none()
+            let text = get_buffer_text(state);
+            let rtf = crate::tools::export::export_rtf(&text);
+            Task::perform(
+                async move {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .add_filter("RTF", &["rtf"])
+                        .set_title("Export as RTF")
+                        .save_file()
+                        .await;
+                    match handle {
+                        Some(h) => {
+                            let path = h.path().to_path_buf();
+                            std::fs::write(&path, &rtf).map_err(|e| e.to_string())
+                        }
+                        None => Err("Cancelled".to_string()),
+                    }
+                },
+                Message::ExportSaved,
+            )
         }
         Message::Exit => {
             std::process::exit(0);
@@ -651,23 +790,31 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Search ──
         Message::ShowFind => {
-            log::info!("Show Find dialog");
+            state.show_find = true;
+            state.show_replace = false;
+            state.active_menu = None;
             Task::none()
         }
         Message::ShowReplace => {
-            log::info!("Show Replace dialog");
+            state.show_find = true;
+            state.show_replace = true;
+            state.active_menu = None;
             Task::none()
         }
         Message::ShowFindInFiles => {
-            log::info!("Show Find in Files dialog");
+            log::info!("Find in files (not yet implemented in Iced UI)");
             Task::none()
         }
         Message::SelectAllOccurrences => {
-            log::info!("Select all occurrences");
+            if !state.search_query.is_empty() {
+                run_search(state);
+            }
             Task::none()
         }
         Message::GotoLine => {
-            log::info!("Go to line dialog");
+            state.show_goto_line = true;
+            state.goto_line_input.clear();
+            state.active_menu = None;
             Task::none()
         }
         Message::ToggleBookmark => {
@@ -759,15 +906,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ZoomIn => {
-            log::info!("Zoom in");
+            state.font_size = (state.font_size + 2.0).min(72.0);
             Task::none()
         }
         Message::ZoomOut => {
-            log::info!("Zoom out");
+            state.font_size = (state.font_size - 2.0).max(6.0);
             Task::none()
         }
         Message::ZoomReset => {
-            log::info!("Zoom reset");
+            state.font_size = 14.0;
             Task::none()
         }
         Message::ToggleFold => {
@@ -879,8 +1026,25 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CompareFiles => {
-            log::info!("Compare files requested");
-            Task::none()
+            Task::perform(
+                async {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .set_title("Compare With...")
+                        .pick_file()
+                        .await;
+                    match handle {
+                        Some(h) => {
+                            let path = h.path().to_path_buf();
+                            match std::fs::read_to_string(&path) {
+                                Ok(content) => Ok(content),
+                                Err(e) => Err(e.to_string()),
+                            }
+                        }
+                        None => Err("Cancelled".to_string()),
+                    }
+                },
+                Message::CompareFileLoaded,
+            )
         }
         Message::ToggleHexViewer => {
             state.show_hex_viewer = !state.show_hex_viewer;
@@ -889,15 +1053,27 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Macro ──
         Message::ToggleMacroRecording => {
-            log::info!("Toggle macro recording");
+            if state.macro_recorder.is_recording() {
+                state.last_macro = Some(state.macro_recorder.stop_recording("Macro"));
+            } else {
+                state.macro_recorder.start_recording();
+            }
             Task::none()
         }
         Message::PlayLastMacro => {
-            log::info!("Play last macro");
+            if let Some(ref m) = state.last_macro.clone() {
+                let doc = state.tab_manager.active_document_mut();
+                MacroRecorder::play_macro(m, doc);
+                rebuild_content(state);
+            }
             Task::none()
         }
         Message::PlayMacroMultiple => {
-            log::info!("Play macro multiple times");
+            if let Some(ref m) = state.last_macro.clone() {
+                let doc = state.tab_manager.active_document_mut();
+                MacroRecorder::play_macro_n_times(m, doc, 10);
+                rebuild_content(state);
+            }
             Task::none()
         }
 
@@ -913,7 +1089,226 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Help ──
         Message::ShowAbout => {
-            log::info!("Notepad+++ v{}", env!("CARGO_PKG_VERSION"));
+            state.show_about = true;
+            Task::none()
+        }
+        Message::CloseAbout => {
+            state.show_about = false;
+            Task::none()
+        }
+
+        // ── Search panel ──
+        Message::FindQueryChanged(query) => {
+            state.search_query = query;
+            run_search(state);
+            Task::none()
+        }
+        Message::ReplaceTextChanged(text) => {
+            state.replace_text = text;
+            Task::none()
+        }
+        Message::ToggleCaseSensitive => {
+            state.case_sensitive = !state.case_sensitive;
+            run_search(state);
+            Task::none()
+        }
+        Message::ToggleWholeWord => {
+            state.whole_word = !state.whole_word;
+            run_search(state);
+            Task::none()
+        }
+        Message::ToggleRegex => {
+            state.use_regex = !state.use_regex;
+            run_search(state);
+            Task::none()
+        }
+        Message::FindNext => {
+            if !state.search_matches.is_empty() {
+                let next = match state.current_match_index {
+                    Some(i) => (i + 1) % state.search_matches.len(),
+                    None => 0,
+                };
+                state.current_match_index = Some(next);
+            }
+            Task::none()
+        }
+        Message::FindPrev => {
+            if !state.search_matches.is_empty() {
+                let prev = match state.current_match_index {
+                    Some(0) | None => state.search_matches.len() - 1,
+                    Some(i) => i - 1,
+                };
+                state.current_match_index = Some(prev);
+            }
+            Task::none()
+        }
+        Message::ReplaceNext => {
+            if let Some(idx) = state.current_match_index {
+                if idx < state.search_matches.len() {
+                    let m = &state.search_matches[idx];
+                    let text = get_buffer_text(state);
+                    let mut new_text = String::with_capacity(text.len());
+                    new_text.push_str(&text[..m.start]);
+                    new_text.push_str(&state.replace_text);
+                    new_text.push_str(&text[m.end..]);
+                    set_buffer_text(state, &new_text);
+                    run_search(state);
+                }
+            }
+            Task::none()
+        }
+        Message::ReplaceAll => {
+            if !state.search_query.is_empty() {
+                let text = get_buffer_text(state);
+                let mut engine = SearchEngine::new();
+                engine.query = state.search_query.clone();
+                engine.replace_text = state.replace_text.clone();
+                engine.case_sensitive = state.case_sensitive;
+                engine.whole_word = state.whole_word;
+                engine.use_regex = state.use_regex;
+                engine.search_mode = if state.use_regex {
+                    SearchMode::Regex
+                } else {
+                    SearchMode::Normal
+                };
+                let (new_text, count) = engine.replace_all(&text);
+                if count > 0 {
+                    set_buffer_text(state, &new_text);
+                    run_search(state);
+                }
+            }
+            Task::none()
+        }
+        Message::CloseSearch => {
+            state.show_find = false;
+            state.show_replace = false;
+            state.search_matches.clear();
+            state.current_match_index = None;
+            Task::none()
+        }
+        Message::ClickSearchResult(idx) => {
+            if idx < state.search_matches.len() {
+                state.current_match_index = Some(idx);
+            }
+            Task::none()
+        }
+
+        // ── Go to line ──
+        Message::GotoLineInputChanged(input) => {
+            state.goto_line_input = input;
+            Task::none()
+        }
+        Message::GotoLineConfirm => {
+            if let Ok(line_num) = state.goto_line_input.trim().parse::<usize>() {
+                if line_num > 0 {
+                    let target = line_num - 1;
+                    state
+                        .tab_manager
+                        .active_document_mut()
+                        .cursor
+                        .position
+                        .line = target;
+                    state
+                        .tab_manager
+                        .active_document_mut()
+                        .cursor
+                        .position
+                        .col = 0;
+                }
+            }
+            state.show_goto_line = false;
+            Task::none()
+        }
+        Message::GotoLineClose => {
+            state.show_goto_line = false;
+            Task::none()
+        }
+
+        // ── Async results ──
+        Message::SessionFileChosen(result) => {
+            if let Ok(path) = result {
+                if let Ok(session) = crate::io::session::load_session(&path) {
+                    state.tab_manager.close_all();
+                    state.tab_contents.clear();
+                    for sf in &session.files {
+                        match state.tab_manager.open_file(sf.path.clone()) {
+                            Ok(idx) => {
+                                let doc = state.tab_manager.get_document(idx).unwrap();
+                                let buf_text = doc.buffer.text();
+                                state.tab_contents.push(TabContent::with_text(&buf_text));
+                            }
+                            Err(_) => {
+                                state.tab_manager.new_tab();
+                                state.tab_contents.push(TabContent::new());
+                            }
+                        }
+                    }
+                    if state.tab_contents.is_empty() {
+                        state.tab_contents.push(TabContent::new());
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::ExportSaved(result) => {
+            if let Err(e) = result {
+                log::error!("Export failed: {}", e);
+            }
+            Task::none()
+        }
+        Message::CompareFileLoaded(result) => {
+            if let Ok(other_text) = result {
+                let current_text = get_buffer_text(state);
+                let diff_result = crate::tools::diff_tool::diff_texts(&current_text, &other_text);
+                let mut diff_text = String::new();
+                for line in &diff_result.lines {
+                    match line {
+                        crate::tools::diff_tool::DiffLine::Same(s) => {
+                            diff_text.push_str("  ");
+                            diff_text.push_str(s);
+                            diff_text.push('\n');
+                        }
+                        crate::tools::diff_tool::DiffLine::Added(s) => {
+                            diff_text.push_str("+ ");
+                            diff_text.push_str(s);
+                            diff_text.push('\n');
+                        }
+                        crate::tools::diff_tool::DiffLine::Removed(s) => {
+                            diff_text.push_str("- ");
+                            diff_text.push_str(s);
+                            diff_text.push('\n');
+                        }
+                        crate::tools::diff_tool::DiffLine::Changed { old, new } => {
+                            diff_text.push_str("- ");
+                            diff_text.push_str(old);
+                            diff_text.push('\n');
+                            diff_text.push_str("+ ");
+                            diff_text.push_str(new);
+                            diff_text.push('\n');
+                        }
+                    }
+                }
+                state.tab_manager.new_tab();
+                state.tab_contents.push(TabContent::with_text(&diff_text));
+                state.tab_manager.active_document_mut().language = "Diff".to_string();
+            }
+            Task::none()
+        }
+
+        // ── Keyboard ──
+        Message::EscapePressed => {
+            if state.show_find {
+                state.show_find = false;
+                state.show_replace = false;
+                state.search_matches.clear();
+                state.current_match_index = None;
+            } else if state.show_goto_line {
+                state.show_goto_line = false;
+            } else if state.show_about {
+                state.show_about = false;
+            } else {
+                state.active_menu = None;
+            }
             Task::none()
         }
     }
@@ -930,10 +1325,28 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         column![].into()
     };
 
+    let search: Element<'_, Message> = if state.show_find {
+        super::search_panel::view_search_panel(state)
+    } else {
+        column![].into()
+    };
+
+    let goto: Element<'_, Message> = if state.show_goto_line {
+        super::goto_dialog::view_goto_dialog(state)
+    } else {
+        column![].into()
+    };
+
+    let about: Element<'_, Message> = if state.show_about {
+        super::about_dialog::view_about_dialog()
+    } else {
+        column![].into()
+    };
+
     let tab_bar = view_tab_bar(state);
     let editor = view_editor(state);
 
-    let mut content = column![menu_bar, dropdown, tab_bar, editor];
+    let mut content = column![menu_bar, dropdown, search, goto, about, tab_bar, editor];
 
     if state.show_status_bar {
         content = content.push(view_status_bar(state));
@@ -947,13 +1360,19 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 
 pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
     keyboard::on_key_press(|key, modifiers| {
-        // Escape closes menus
+        // Escape closes dialogs/menus — handled in update() which checks priority
         if matches!(key.as_ref(), keyboard::Key::Named(keyboard::key::Named::Escape)) {
-            return Some(Message::MenuClose);
+            return Some(Message::EscapePressed);
         }
 
         // Function keys
         match key.as_ref() {
+            keyboard::Key::Named(keyboard::key::Named::F3) if modifiers.shift() => {
+                return Some(Message::FindPrev);
+            }
+            keyboard::Key::Named(keyboard::key::Named::F3) => {
+                return Some(Message::FindNext);
+            }
             keyboard::Key::Named(keyboard::key::Named::F2) if modifiers.shift() => {
                 return Some(Message::PrevBookmark);
             }
@@ -988,6 +1407,10 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
             keyboard::Key::Character("+") => Some(Message::ZoomIn),
             keyboard::Key::Character("-") => Some(Message::ZoomOut),
             keyboard::Key::Character("0") => Some(Message::ZoomReset),
+            keyboard::Key::Character("r") if modifiers.shift() => {
+                Some(Message::ToggleMacroRecording)
+            }
+            keyboard::Key::Character("p") if modifiers.shift() => Some(Message::PlayLastMacro),
             _ => None,
         }
     })
@@ -1125,6 +1548,7 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     if let Some(tc) = state.tab_contents.get(active) {
         let editor = text_editor(&tc.content)
             .on_action(Message::EditorAction)
+            .size(state.font_size)
             .height(Length::Fill);
 
         container(editor)
@@ -1200,3 +1624,43 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 }
 
 
+fn run_search(state: &mut NotepadIced) {
+    if state.search_query.is_empty() {
+        state.search_matches.clear();
+        state.current_match_index = None;
+        return;
+    }
+
+    let mut engine = SearchEngine::new();
+    engine.query = state.search_query.clone();
+    engine.case_sensitive = state.case_sensitive;
+    engine.whole_word = state.whole_word;
+    engine.use_regex = state.use_regex;
+    engine.search_mode = if state.use_regex {
+        SearchMode::Regex
+    } else {
+        SearchMode::Normal
+    };
+
+    let text = get_buffer_text(state);
+    state.search_matches = engine.find_all(&text);
+
+    // Keep current_match_index in bounds
+    if state.search_matches.is_empty() {
+        state.current_match_index = None;
+    } else if let Some(idx) = state.current_match_index {
+        if idx >= state.search_matches.len() {
+            state.current_match_index = Some(0);
+        }
+    } else {
+        state.current_match_index = Some(0);
+    }
+}
+
+fn rebuild_content(state: &mut NotepadIced) {
+    let idx = state.tab_manager.active_index();
+    let buf_text = state.tab_manager.active_document().buffer.text();
+    if idx < state.tab_contents.len() {
+        state.tab_contents[idx] = TabContent::with_text(&buf_text);
+    }
+}
