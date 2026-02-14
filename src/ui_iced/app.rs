@@ -46,6 +46,7 @@ pub enum Message {
     // Menu state
     MenuToggle(String),
     MenuClose,
+    SubMenuToggle(String),
 
     // File
     SaveAll,
@@ -188,6 +189,7 @@ pub struct NotepadIced {
 
     // Menu state
     pub active_menu: Option<String>,
+    pub expanded_submenus: std::collections::HashSet<String>,
 
     // View toggles
     pub word_wrap: bool,
@@ -235,6 +237,7 @@ impl Default for NotepadIced {
             tab_manager: TabManager::new(),
             tab_contents: vec![TabContent::new()],
             active_menu: None,
+            expanded_submenus: std::collections::HashSet::new(),
             word_wrap: false,
             show_line_numbers: true,
             show_whitespace: false,
@@ -277,7 +280,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
     // Close menu for most actions (except MenuToggle/MenuClose/EditorAction and dialog-internal messages)
     let should_close_menu = !matches!(
         message,
-        Message::MenuToggle(_) | Message::MenuClose | Message::EditorAction(_)
+        Message::MenuToggle(_) | Message::MenuClose | Message::SubMenuToggle(_) | Message::EditorAction(_)
             | Message::FileOpened(_) | Message::FileSaved(_)
             | Message::FindQueryChanged(_) | Message::ReplaceTextChanged(_)
             | Message::ToggleCaseSensitive | Message::ToggleWholeWord | Message::ToggleRegex
@@ -421,13 +424,24 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::MenuToggle(name) => {
             if state.active_menu.as_ref() == Some(&name) {
                 state.active_menu = None;
+                state.expanded_submenus.clear();
             } else {
                 state.active_menu = Some(name);
+                state.expanded_submenus.clear();
             }
             Task::none()
         }
         Message::MenuClose => {
             state.active_menu = None;
+            state.expanded_submenus.clear();
+            Task::none()
+        }
+        Message::SubMenuToggle(name) => {
+            if state.expanded_submenus.contains(&name) {
+                state.expanded_submenus.remove(&name);
+            } else {
+                state.expanded_submenus.insert(name);
+            }
             Task::none()
         }
 
