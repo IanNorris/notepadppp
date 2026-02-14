@@ -386,7 +386,7 @@ fn check_item<'a>(label: &str, checked: bool, msg: Message) -> Element<'a, Messa
 }
 
 fn submenu_toggle<'a>(label: &str, is_expanded: bool) -> Element<'a, Message> {
-    let arrow = if is_expanded { "▾" } else { "▸" };
+    let arrow = if is_expanded { "v" } else { ">" };
     button(
         row![
             text(format!("{} {}", arrow, label)).size(13).color(SUBMENU_HEADER),
