@@ -7,8 +7,22 @@ fn main() {
     notepadppp::native::win32::run();
 }
 
+// ── Iced UI entry point ──
+#[cfg(feature = "iced-ui")]
+fn main() -> iced::Result {
+    use notepadppp::ui_iced::app;
+
+    env_logger::init();
+
+    iced::application(app::title, app::update, app::view)
+        .subscription(app::subscription)
+        .theme(app::theme)
+        .window_size(iced::Size::new(1200.0, 800.0))
+        .run()
+}
+
 // ── Default eframe entry point ──
-#[cfg(not(all(windows, feature = "native-win32")))]
+#[cfg(not(any(all(windows, feature = "native-win32"), feature = "iced-ui")))]
 fn main() -> eframe::Result<()> {
     use notepadppp::platform::cli::CliArgs;
     use notepadppp::platform::single_instance::{self, InstanceMessage, SingleInstanceResult};
@@ -85,7 +99,7 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-#[cfg(not(all(windows, feature = "native-win32")))]
+#[cfg(not(any(all(windows, feature = "native-win32"), feature = "iced-ui")))]
 fn handle_shell_registration(cli: &notepadppp::platform::cli::CliArgs) {
     let exe_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())

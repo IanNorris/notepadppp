@@ -6,3 +6,5 @@ pub mod platform;
 pub mod search;
 pub mod tools;
 pub mod ui;
+#[cfg(feature = "iced-ui")]
+pub mod ui_iced;

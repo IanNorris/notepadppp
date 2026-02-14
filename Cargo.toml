@@ -24,10 +24,12 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 pulldown-cmark = "0.12"
 open = "5"
 base64 = "0.22"
+iced = { version = "0.13", features = ["tokio"], optional = true }
 
 [features]
 default = ["native-win32"]
 native-win32 = []
+iced-ui = ["iced"]
 
 [build-dependencies]
 cc = "1"
