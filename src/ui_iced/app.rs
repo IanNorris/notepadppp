@@ -1353,29 +1353,18 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
+    let tab_bar = view_tab_bar(state);
 
+    // Search panel sits between tab bar and editor (inline, like Notepad++)
     let search: Element<'_, Message> = if state.show_find {
         super::search_panel::view_search_panel(state)
     } else {
         column![].into()
     };
 
-    let goto: Element<'_, Message> = if state.show_goto_line {
-        super::goto_dialog::view_goto_dialog(state)
-    } else {
-        column![].into()
-    };
-
-    let about: Element<'_, Message> = if state.show_about {
-        super::about_dialog::view_about_dialog()
-    } else {
-        column![].into()
-    };
-
-    let tab_bar = view_tab_bar(state);
     let editor = view_editor(state);
 
-    let mut base_content = column![menu_bar, search, goto, about, tab_bar, editor];
+    let mut base_content = column![menu_bar, tab_bar, search, editor];
 
     if state.show_status_bar {
         base_content = base_content.push(view_status_bar(state));
@@ -1386,21 +1375,38 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         .height(Length::Fill)
         .into();
 
-    // If a dropdown menu is open, overlay it on top using a Stack
+    // Collect overlays: dropdown menu, goto dialog, about dialog
+    let has_dropdown = state.active_menu.is_some();
+    let has_overlay = has_dropdown || state.show_goto_line || state.show_about;
+
+    if !has_overlay {
+        return base;
+    }
+
+    // Click-catcher dismisses all overlays
+    let dismiss_msg = if has_dropdown {
+        Message::MenuClose
+    } else if state.show_goto_line {
+        Message::GotoLineClose
+    } else {
+        Message::CloseAbout
+    };
+
+    let click_catcher: Element<'_, Message> = mouse_area(
+        container(Space::new(Length::Fill, Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(dismiss_msg)
+    .into();
+
+    let mut layers: Vec<Element<'_, Message>> = vec![base, click_catcher];
+
+    // Dropdown menu overlay (positioned below menu bar)
     if let Some(ref menu_name) = state.active_menu {
         let dropdown = scrollable(menu_bar::view_dropdown(state, menu_name))
             .height(Length::Shrink);
 
-        // Transparent click-catcher that closes the menu when clicking outside
-        let click_catcher: Element<'_, Message> = mouse_area(
-            container(Space::new(Length::Fill, Length::Fill))
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press(Message::MenuClose)
-        .into();
-
-        // Position dropdown at top-left, below the menu bar (~26px)
         let dropdown_overlay: Element<'_, Message> = container(
             opaque(
                 container(dropdown)
@@ -1421,10 +1427,38 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         .height(Length::Shrink)
         .into();
 
-        stack![base, click_catcher, dropdown_overlay].into()
-    } else {
-        base
+        layers.push(dropdown_overlay);
     }
+
+    // Go to Line dialog (centered overlay)
+    if state.show_goto_line {
+        let goto_overlay: Element<'_, Message> = container(
+            opaque(super::goto_dialog::view_goto_dialog(state)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
+
+        layers.push(goto_overlay);
+    }
+
+    // About dialog (centered overlay)
+    if state.show_about {
+        let about_overlay: Element<'_, Message> = container(
+            opaque(super::about_dialog::view_about_dialog()),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
+
+        layers.push(about_overlay);
+    }
+
+    stack(layers).into()
 }
 
 pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
