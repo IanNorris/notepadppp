@@ -182,6 +182,11 @@ pub enum Message {
 
     // Keyboard
     EscapePressed,
+
+    // Drag floating panels
+    DragFindStart,
+    DragFindMove(iced::Point),
+    DragFindEnd,
 }
 
 pub struct NotepadIced {
@@ -224,6 +229,12 @@ pub struct NotepadIced {
     // About
     pub show_about: bool,
 
+    // Floating panel positions (None = default position)
+    pub find_panel_pos: Option<(f32, f32)>,
+    pub dragging_find_panel: bool,
+    pub drag_offset: (f32, f32),
+    pub last_mouse_pos: iced::Point,
+
     // Zoom
     pub font_size: f32,
 
@@ -264,6 +275,10 @@ impl Default for NotepadIced {
             show_goto_line: false,
             goto_line_input: String::new(),
             show_about: false,
+            find_panel_pos: None, // None = right-aligned default
+            dragging_find_panel: false,
+            drag_offset: (0.0, 0.0),
+            last_mouse_pos: iced::Point::ORIGIN,
             font_size: 14.0,
             macro_recorder: MacroRecorder::new(),
             last_macro: None,
@@ -295,6 +310,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::CloseAbout
             | Message::SessionFileChosen(_) | Message::ExportSaved(_) | Message::CompareFileLoaded(_)
             | Message::EscapePressed
+            | Message::DragFindStart | Message::DragFindMove(_) | Message::DragFindEnd
     );
     if should_close_menu {
         state.active_menu = None;
@@ -1348,6 +1364,31 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+
+        // ── Drag floating panels ──
+        Message::DragFindStart => {
+            state.dragging_find_panel = true;
+            // Calculate offset from mouse to panel position
+            let pos = state.find_panel_pos.unwrap_or((0.0, 60.0));
+            state.drag_offset = (
+                state.last_mouse_pos.x - pos.0,
+                state.last_mouse_pos.y - pos.1,
+            );
+            Task::none()
+        }
+        Message::DragFindMove(point) => {
+            state.last_mouse_pos = point;
+            if state.dragging_find_panel {
+                let x = (point.x - state.drag_offset.0).max(0.0);
+                let y = (point.y - state.drag_offset.1).max(0.0);
+                state.find_panel_pos = Some((x, y));
+            }
+            Task::none()
+        }
+        Message::DragFindEnd => {
+            state.dragging_find_panel = false;
+            Task::none()
+        }
     }
 }
 
@@ -1416,16 +1457,41 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         }
     }
 
-    // Find/Replace — floating non-modal window, top-right
+    // Find/Replace — floating non-modal draggable window
     if state.show_find {
-        let search_overlay: Element<'_, Message> = container(
-            opaque(super::search_panel::view_search_panel(state)),
-        )
-        .width(Length::Fill)
-        .height(Length::Shrink)
-        .padding(iced::Padding { top: 60.0, right: 16.0, bottom: 0.0, left: 0.0 })
-        .align_right(Length::Shrink)
-        .into();
+        // If dragging, add a full-window mouse tracking layer
+        if state.dragging_find_panel {
+            let drag_tracker: Element<'_, Message> = mouse_area(
+                container(Space::new(Length::Fill, Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(Message::DragFindMove)
+            .on_release(Message::DragFindEnd)
+            .into();
+            layers.push(drag_tracker);
+        }
+
+        let search_widget = opaque(super::search_panel::view_search_panel(state));
+
+        let search_overlay: Element<'_, Message> = match state.find_panel_pos {
+            Some((x, y)) => {
+                // Absolute position via padding
+                container(search_widget)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding { top: y, right: 0.0, bottom: 0.0, left: x })
+                    .into()
+            }
+            None => {
+                // Default: right-aligned, below tabs/menu
+                container(search_widget)
+                    .padding(iced::Padding { top: 60.0, right: 16.0, bottom: 0.0, left: 0.0 })
+                    .align_right(Length::Fill)
+                    .height(Length::Shrink)
+                    .into()
+            }
+        };
 
         layers.push(search_overlay);
     }

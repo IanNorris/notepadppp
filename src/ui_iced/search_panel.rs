@@ -1,10 +1,11 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, text, text_input, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
 use super::theme::AppColors;
 
 const PANEL_BG: iced::Color = iced::Color::from_rgb(0.16, 0.16, 0.20);
+const TITLE_BAR_BG: iced::Color = iced::Color::from_rgb(0.13, 0.13, 0.17);
 const TOGGLE_ON: iced::Color = iced::Color::from_rgb(0.0, 0.47, 0.84);
 const TOGGLE_OFF: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
 const MATCH_BG: iced::Color = iced::Color::from_rgb(0.18, 0.18, 0.22);
@@ -21,15 +22,37 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
         format!("{} of {} matches", idx, match_count)
     };
 
-    // Title bar
+    // Draggable title bar
     let title = if state.show_replace { "Find and Replace" } else { "Find" };
-    let title_bar = row![
+    let title_bar_content = row![
         text(title).size(13).color(AppColors::TEXT),
         Space::with_width(Length::Fill),
         nav_button("x", Message::CloseSearch),
     ]
     .align_y(iced::Alignment::Center)
     .padding([4, 8]);
+
+    let title_bar: Element<'_, Message> = mouse_area(
+        container(title_bar_content)
+            .width(Length::Fill)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(TITLE_BAR_BG)),
+                border: iced::Border {
+                    radius: iced::border::Radius {
+                        top_left: 6.0,
+                        top_right: 6.0,
+                        bottom_left: 0.0,
+                        bottom_right: 0.0,
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::DragFindStart)
+    .on_move(Message::DragFindMove)
+    .on_release(Message::DragFindEnd)
+    .into();
 
     // Toggle buttons
     let case_btn = toggle_button("Aa", state.case_sensitive, Message::ToggleCaseSensitive);
