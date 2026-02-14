@@ -1354,17 +1354,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
     let tab_bar = view_tab_bar(state);
-
-    // Search panel sits between tab bar and editor (inline, like Notepad++)
-    let search: Element<'_, Message> = if state.show_find {
-        super::search_panel::view_search_panel(state)
-    } else {
-        column![].into()
-    };
-
     let editor = view_editor(state);
 
-    let mut base_content = column![menu_bar, tab_bar, search, editor];
+    let mut base_content = column![menu_bar, tab_bar, editor];
 
     if state.show_status_bar {
         base_content = base_content.push(view_status_bar(state));
@@ -1375,62 +1367,70 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         .height(Length::Fill)
         .into();
 
-    // Collect overlays: dropdown menu, goto dialog, about dialog
+    // Check if any overlay is needed
     let has_dropdown = state.active_menu.is_some();
-    let has_overlay = has_dropdown || state.show_goto_line || state.show_about;
+    let has_floating = state.show_find || state.show_goto_line || state.show_about;
 
-    if !has_overlay {
+    if !has_dropdown && !has_floating {
         return base;
     }
 
-    // Click-catcher dismisses all overlays
-    let dismiss_msg = if has_dropdown {
-        Message::MenuClose
-    } else if state.show_goto_line {
-        Message::GotoLineClose
-    } else {
-        Message::CloseAbout
-    };
+    let mut layers: Vec<Element<'_, Message>> = vec![base];
 
-    let click_catcher: Element<'_, Message> = mouse_area(
-        container(Space::new(Length::Fill, Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(dismiss_msg)
-    .into();
-
-    let mut layers: Vec<Element<'_, Message>> = vec![base, click_catcher];
-
-    // Dropdown menu overlay (positioned below menu bar)
-    if let Some(ref menu_name) = state.active_menu {
-        let dropdown = scrollable(menu_bar::view_dropdown(state, menu_name))
-            .height(Length::Shrink);
-
-        let dropdown_overlay: Element<'_, Message> = container(
-            opaque(
-                container(dropdown)
-                    .max_height(500)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(super::theme::AppColors::TAB_BAR_BG)),
-                        border: iced::Border {
-                            color: iced::Color::from_rgb(0.3, 0.3, 0.35),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        ..Default::default()
-                    }),
-            ),
+    // Dropdown menu: needs a click-catcher (modal — clicking outside closes it)
+    if has_dropdown {
+        let click_catcher: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
         )
-        .padding(iced::Padding { top: 26.0, right: 0.0, bottom: 0.0, left: 0.0 })
-        .width(Length::Shrink)
-        .height(Length::Shrink)
+        .on_press(Message::MenuClose)
         .into();
+        layers.push(click_catcher);
 
-        layers.push(dropdown_overlay);
+        if let Some(ref menu_name) = state.active_menu {
+            let dropdown = scrollable(menu_bar::view_dropdown(state, menu_name))
+                .height(Length::Shrink);
+
+            let dropdown_overlay: Element<'_, Message> = container(
+                opaque(
+                    container(dropdown)
+                        .max_height(500)
+                        .style(|_theme: &Theme| container::Style {
+                            background: Some(iced::Background::Color(super::theme::AppColors::TAB_BAR_BG)),
+                            border: iced::Border {
+                                color: iced::Color::from_rgb(0.3, 0.3, 0.35),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            ..Default::default()
+                        }),
+                ),
+            )
+            .padding(iced::Padding { top: 26.0, right: 0.0, bottom: 0.0, left: 0.0 })
+            .width(Length::Shrink)
+            .height(Length::Shrink)
+            .into();
+
+            layers.push(dropdown_overlay);
+        }
     }
 
-    // Go to Line dialog (centered overlay)
+    // Find/Replace — floating non-modal window, top-right
+    if state.show_find {
+        let search_overlay: Element<'_, Message> = container(
+            opaque(super::search_panel::view_search_panel(state)),
+        )
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .padding(iced::Padding { top: 60.0, right: 16.0, bottom: 0.0, left: 0.0 })
+        .align_right(Length::Shrink)
+        .into();
+
+        layers.push(search_overlay);
+    }
+
+    // Go to Line — floating non-modal, centered
     if state.show_goto_line {
         let goto_overlay: Element<'_, Message> = container(
             opaque(super::goto_dialog::view_goto_dialog(state)),
@@ -1444,7 +1444,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         layers.push(goto_overlay);
     }
 
-    // About dialog (centered overlay)
+    // About — floating non-modal, centered
     if state.show_about {
         let about_overlay: Element<'_, Message> = container(
             opaque(super::about_dialog::view_about_dialog()),

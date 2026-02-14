@@ -21,53 +21,75 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
         format!("{} of {} matches", idx, match_count)
     };
 
+    // Title bar
+    let title = if state.show_replace { "Find and Replace" } else { "Find" };
+    let title_bar = row![
+        text(title).size(13).color(AppColors::TEXT),
+        Space::with_width(Length::Fill),
+        nav_button("x", Message::CloseSearch),
+    ]
+    .align_y(iced::Alignment::Center)
+    .padding([4, 8]);
+
     // Toggle buttons
     let case_btn = toggle_button("Aa", state.case_sensitive, Message::ToggleCaseSensitive);
     let word_btn = toggle_button("W", state.whole_word, Message::ToggleWholeWord);
     let regex_btn = toggle_button(".*", state.use_regex, Message::ToggleRegex);
 
     // Nav buttons
-    let prev_btn = nav_button("↑", Message::FindPrev);
-    let next_btn = nav_button("↓", Message::FindNext);
-    let close_btn = nav_button("×", Message::CloseSearch);
+    let prev_btn = nav_button("<", Message::FindPrev);
+    let next_btn = nav_button(">", Message::FindNext);
 
     let find_input = text_input("Find...", &state.search_query)
         .on_input(Message::FindQueryChanged)
         .on_submit(Message::FindNext)
         .size(13)
-        .width(Length::Fixed(300.0));
+        .width(Length::Fixed(250.0));
 
     let find_row = row![
+        text("Find what:").size(12).color(AppColors::TEXT_DIM),
+        Space::with_width(8),
         find_input,
+        Space::with_width(4),
         case_btn,
         word_btn,
         regex_btn,
         Space::with_width(8),
         prev_btn,
         next_btn,
-        Space::with_width(8),
-        text(match_label).size(12).color(AppColors::TEXT_DIM),
-        Space::with_width(Length::Fill),
-        close_btn,
     ]
     .spacing(4)
-    .align_y(iced::Alignment::Center);
+    .align_y(iced::Alignment::Center)
+    .padding([2, 8]);
 
-    let mut panel = column![find_row].spacing(4).padding([6, 8]);
+    let match_info = row![
+        text(match_label).size(11).color(AppColors::TEXT_DIM),
+    ]
+    .padding([0, 8]);
+
+    let mut panel = column![title_bar, find_row, match_info].spacing(2);
 
     // Replace row
     if state.show_replace {
         let replace_input = text_input("Replace...", &state.replace_text)
             .on_input(Message::ReplaceTextChanged)
             .size(13)
-            .width(Length::Fixed(300.0));
+            .width(Length::Fixed(250.0));
 
         let replace_btn = action_button("Replace", Message::ReplaceNext);
         let replace_all_btn = action_button("Replace All", Message::ReplaceAll);
 
-        let replace_row = row![replace_input, replace_btn, replace_all_btn]
-            .spacing(4)
-            .align_y(iced::Alignment::Center);
+        let replace_row = row![
+            text("Replace with:").size(12).color(AppColors::TEXT_DIM),
+            Space::with_width(8),
+            replace_input,
+            Space::with_width(4),
+            replace_btn,
+            replace_all_btn,
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center)
+        .padding([2, 8]);
 
         panel = panel.push(replace_row);
     }
@@ -75,7 +97,7 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     // Results list
     if !state.search_matches.is_empty() {
         let mut results_col = column![].spacing(1);
-        for (i, m) in state.search_matches.iter().enumerate() {
+        for (i, m) in state.search_matches.iter().enumerate().take(100) {
             let line_num = format!("{:>5}: ", m.line + 1);
             let line_text = m.line_text.trim().to_string();
             let is_current = state.current_match_index == Some(i);
@@ -83,8 +105,8 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
 
             let result_btn = button(
                 row![
-                    text(line_num).size(12).color(AppColors::TEXT_DIM),
-                    text(line_text).size(12).color(AppColors::TEXT),
+                    text(line_num).size(11).color(AppColors::TEXT_DIM),
+                    text(line_text).size(11).color(AppColors::TEXT),
                 ]
                 .spacing(4),
             )
@@ -107,18 +129,24 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
             results_col = results_col.push(result_btn);
         }
 
-        let results = scrollable(results_col).height(Length::Fixed(150.0));
-        panel = panel.push(results);
+        let results = scrollable(results_col).height(Length::Fixed(120.0));
+        panel = panel.push(container(results).padding([4, 8]));
     }
 
+    // Wrap in a window-like container
     container(panel)
-        .width(Length::Fill)
+        .width(Length::Fixed(520.0))
         .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(PANEL_BG)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.25, 0.25, 0.30),
-                width: 0.0,
-                radius: 0.0.into(),
+                color: iced::Color::from_rgb(0.35, 0.35, 0.40),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                offset: iced::Vector::new(2.0, 4.0),
+                blur_radius: 12.0,
             },
             ..Default::default()
         })
