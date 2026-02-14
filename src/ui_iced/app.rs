@@ -1,10 +1,11 @@
 use iced::keyboard;
-use iced::widget::{button, column, container, row, text, text_editor, Space};
+use iced::widget::{button, column, container, row, scrollable, text, text_editor};
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::tab_manager::TabManager;
 
+use super::menu_bar;
 use super::theme::AppColors;
 
 /// Per-tab state that pairs an iced text_editor::Content with our Document index.
@@ -39,11 +40,139 @@ pub enum Message {
     SelectTab(usize),
     Undo,
     Redo,
+
+    // Menu state
+    MenuToggle(String),
+    MenuClose,
+
+    // File
+    SaveAll,
+    CloseAll,
+    SaveSession,
+    LoadSession,
+    ToggleAutoRestore,
+    ExportHtml,
+    ExportRtf,
+    Exit,
+
+    // Edit
+    SelectAll,
+    ToggleComment,
+    // Line operations
+    DuplicateLine,
+    DeleteLine,
+    MoveLineUp,
+    MoveLineDown,
+    SortAsc,
+    SortDesc,
+    RemoveEmpty,
+    RemoveDuplicates,
+    TrimTrailing,
+    JoinLines,
+    SplitLine,
+    InsertAbove,
+    InsertBelow,
+    ReverseLines,
+    SortCaseInsensitive,
+    SortNumeric,
+    TrimLeading,
+    TrimBoth,
+    // Case
+    UpperCase,
+    LowerCase,
+    TitleCase,
+    SentenceCase,
+    InverseCase,
+    // Encoding / line ending
+    SetEncoding(Encoding),
+    SetLineEnding(LineEnding),
+
+    // Search
+    ShowFind,
+    ShowReplace,
+    ShowFindInFiles,
+    SelectAllOccurrences,
+    GotoLine,
+    ToggleBookmark,
+    NextBookmark,
+    PrevBookmark,
+    ClearBookmarks,
+    CopyBookmarkedLines,
+    RemoveBookmarkedLines,
+    RemoveUnbookmarkedLines,
+
+    // View
+    ToggleWordWrap,
+    ToggleLineNumbers,
+    ToggleWhitespace,
+    ToggleStatusBar,
+    ToggleMinimap,
+    ToggleFunctionList,
+    SplitHorizontal,
+    SplitVertical,
+    RemoveSplit,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    ToggleFold,
+    FoldAll,
+    UnfoldAll,
+    FoldLevel(usize),
+
+    // Language
+    SetLanguage(String),
+
+    // Tools
+    JsonFormat,
+    JsonCompact,
+    JsonValidate,
+    JsonSortKeys,
+    ToggleMarkdownPreview,
+    ToggleCsvViewer,
+    MimeBase64Encode,
+    MimeBase64Decode,
+    MimeUrlEncode,
+    MimeUrlDecode,
+    MimeHtmlEncode,
+    MimeHtmlDecode,
+    MimeHexEncode,
+    MimeHexDecode,
+    CompareFiles,
+    ToggleHexViewer,
+
+    // Macro
+    ToggleMacroRecording,
+    PlayLastMacro,
+    PlayMacroMultiple,
+
+    // Settings
+    ShowPreferences,
+    ShowKeybindings,
+
+    // Help
+    ShowAbout,
 }
 
 pub struct NotepadIced {
-    tab_manager: TabManager,
+    pub tab_manager: TabManager,
     tab_contents: Vec<TabContent>,
+
+    // Menu state
+    pub active_menu: Option<String>,
+
+    // View toggles
+    pub word_wrap: bool,
+    pub show_line_numbers: bool,
+    pub show_whitespace: bool,
+    pub show_status_bar: bool,
+    pub show_minimap: bool,
+    pub show_function_list: bool,
+    pub show_markdown_preview: bool,
+    pub show_csv_viewer: bool,
+    pub show_hex_viewer: bool,
+
+    // Session
+    pub auto_restore_session: bool,
 }
 
 impl Default for NotepadIced {
@@ -51,6 +180,17 @@ impl Default for NotepadIced {
         Self {
             tab_manager: TabManager::new(),
             tab_contents: vec![TabContent::new()],
+            active_menu: None,
+            word_wrap: false,
+            show_line_numbers: true,
+            show_whitespace: false,
+            show_status_bar: true,
+            show_minimap: false,
+            show_function_list: false,
+            show_markdown_preview: false,
+            show_csv_viewer: false,
+            show_hex_viewer: false,
+            auto_restore_session: false,
         }
     }
 }
@@ -65,6 +205,16 @@ pub fn title(state: &NotepadIced) -> String {
 }
 
 pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
+    // Close menu for most actions (except MenuToggle/MenuClose/EditorAction)
+    let should_close_menu = !matches!(
+        message,
+        Message::MenuToggle(_) | Message::MenuClose | Message::EditorAction(_)
+            | Message::FileOpened(_) | Message::FileSaved(_)
+    );
+    if should_close_menu {
+        state.active_menu = None;
+    }
+
     match message {
         Message::EditorAction(action) => {
             if let Some(tc) = state
@@ -153,9 +303,14 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CloseTab(idx) => {
-            if idx < state.tab_contents.len() {
-                state.tab_contents.remove(idx);
-                state.tab_manager.close_tab(idx);
+            let actual_idx = if idx == usize::MAX {
+                state.tab_manager.active_index()
+            } else {
+                idx
+            };
+            if actual_idx < state.tab_contents.len() {
+                state.tab_contents.remove(actual_idx);
+                state.tab_manager.close_tab(actual_idx);
                 while state.tab_contents.len() < state.tab_manager.tab_count() {
                     state.tab_contents.push(TabContent::new());
                 }
@@ -184,16 +339,605 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.tab_contents[idx] = TabContent::with_text(&buf_text);
             Task::none()
         }
+
+        // ── Menu state ──
+        Message::MenuToggle(name) => {
+            if state.active_menu.as_ref() == Some(&name) {
+                state.active_menu = None;
+            } else {
+                state.active_menu = Some(name);
+            }
+            Task::none()
+        }
+        Message::MenuClose => {
+            state.active_menu = None;
+            Task::none()
+        }
+
+        // ── File ──
+        Message::SaveAll => {
+            for i in 0..state.tab_manager.tab_count() {
+                sync_content_to_doc(state, i);
+                if state.tab_manager.get_document(i).map_or(false, |d| d.path.is_some()) {
+                    if let Err(e) = state.tab_manager.save_tab(i) {
+                        log::error!("Save All failed for tab {}: {}", i, e);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::CloseAll => {
+            state.tab_manager.close_all();
+            state.tab_contents.clear();
+            state.tab_contents.push(TabContent::new());
+            Task::none()
+        }
+        Message::SaveSession => {
+            log::info!("Save session requested (not yet wired)");
+            Task::none()
+        }
+        Message::LoadSession => {
+            log::info!("Load session requested (not yet wired)");
+            Task::none()
+        }
+        Message::ToggleAutoRestore => {
+            state.auto_restore_session = !state.auto_restore_session;
+            Task::none()
+        }
+        Message::ExportHtml => {
+            log::info!("Export HTML requested");
+            Task::none()
+        }
+        Message::ExportRtf => {
+            log::info!("Export RTF requested");
+            Task::none()
+        }
+        Message::Exit => {
+            std::process::exit(0);
+        }
+
+        // ── Edit ──
+        Message::SelectAll => {
+            if let Some(tc) = state.tab_contents.get_mut(state.tab_manager.active_index()) {
+                tc.content.perform(text_editor::Action::SelectAll);
+            }
+            Task::none()
+        }
+        Message::ToggleComment => {
+            apply_line_op(state, |lines, cursor_line| {
+                let language = "Rust"; // default
+                let prefix = crate::editor::comments::line_comment_prefix(language).unwrap_or("//");
+                let prefix_space = format!("{} ", prefix);
+                if cursor_line < lines.len() {
+                    let line = &lines[cursor_line];
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with(&prefix_space) {
+                        let indent = line.len() - trimmed.len();
+                        let rest = &trimmed[prefix_space.len()..];
+                        lines[cursor_line] = format!("{}{}", &line[..indent], rest);
+                    } else if trimmed.starts_with(prefix) {
+                        let indent = line.len() - trimmed.len();
+                        let rest = &trimmed[prefix.len()..];
+                        lines[cursor_line] = format!("{}{}", &line[..indent], rest);
+                    } else {
+                        let indent = line.len() - trimmed.len();
+                        lines[cursor_line] = format!("{}{} {}", &line[..indent], prefix, trimmed);
+                    }
+                }
+            });
+            Task::none()
+        }
+
+        // Line operations
+        Message::DuplicateLine => {
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line < lines.len() {
+                    let dup = lines[cursor_line].clone();
+                    lines.insert(cursor_line + 1, dup);
+                }
+            });
+            Task::none()
+        }
+        Message::DeleteLine => {
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line < lines.len() && lines.len() > 1 {
+                    lines.remove(cursor_line);
+                } else if lines.len() == 1 {
+                    lines[0] = String::new();
+                }
+            });
+            Task::none()
+        }
+        Message::MoveLineUp => {
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line > 0 && cursor_line < lines.len() {
+                    lines.swap(cursor_line, cursor_line - 1);
+                }
+            });
+            Task::none()
+        }
+        Message::MoveLineDown => {
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line + 1 < lines.len() {
+                    lines.swap(cursor_line, cursor_line + 1);
+                }
+            });
+            Task::none()
+        }
+        Message::SortAsc => {
+            apply_line_op(state, |lines, _| lines.sort());
+            Task::none()
+        }
+        Message::SortDesc => {
+            apply_line_op(state, |lines, _| {
+                lines.sort();
+                lines.reverse();
+            });
+            Task::none()
+        }
+        Message::RemoveEmpty => {
+            apply_line_op(state, |lines, _| {
+                lines.retain(|l| !l.trim().is_empty());
+                if lines.is_empty() {
+                    lines.push(String::new());
+                }
+            });
+            Task::none()
+        }
+        Message::RemoveDuplicates => {
+            apply_line_op(state, |lines, _| {
+                let mut seen = std::collections::HashSet::new();
+                lines.retain(|l| seen.insert(l.clone()));
+                if lines.is_empty() {
+                    lines.push(String::new());
+                }
+            });
+            Task::none()
+        }
+        Message::TrimTrailing => {
+            apply_line_op(state, |lines, _| {
+                for line in lines.iter_mut() {
+                    *line = line.trim_end().to_string();
+                }
+            });
+            Task::none()
+        }
+        Message::JoinLines => {
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line < lines.len().saturating_sub(1) {
+                    let next = lines.remove(cursor_line + 1);
+                    lines[cursor_line].push_str(&next);
+                }
+            });
+            Task::none()
+        }
+        Message::SplitLine => {
+            // Split at cursor column (simplified: split in the middle)
+            apply_line_op(state, |lines, cursor_line| {
+                if cursor_line < lines.len() {
+                    let current = lines[cursor_line].clone();
+                    let mid = current.len() / 2;
+                    lines[cursor_line] = current[..mid].to_string();
+                    lines.insert(cursor_line + 1, current[mid..].to_string());
+                }
+            });
+            Task::none()
+        }
+        Message::InsertAbove => {
+            apply_line_op(state, |lines, cursor_line| {
+                lines.insert(cursor_line, String::new());
+            });
+            Task::none()
+        }
+        Message::InsertBelow => {
+            apply_line_op(state, |lines, cursor_line| {
+                lines.insert(cursor_line + 1, String::new());
+            });
+            Task::none()
+        }
+        Message::ReverseLines => {
+            apply_line_op(state, |lines, _| lines.reverse());
+            Task::none()
+        }
+        Message::SortCaseInsensitive => {
+            apply_line_op(state, |lines, _| {
+                lines.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            });
+            Task::none()
+        }
+        Message::SortNumeric => {
+            apply_line_op(state, |lines, _| {
+                lines.sort_by(|a, b| {
+                    let na = a.trim().parse::<f64>().ok();
+                    let nb = b.trim().parse::<f64>().ok();
+                    match (na, nb) {
+                        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => a.cmp(b),
+                    }
+                });
+            });
+            Task::none()
+        }
+        Message::TrimLeading => {
+            apply_line_op(state, |lines, _| {
+                for line in lines.iter_mut() {
+                    *line = line.trim_start().to_string();
+                }
+            });
+            Task::none()
+        }
+        Message::TrimBoth => {
+            apply_line_op(state, |lines, _| {
+                for line in lines.iter_mut() {
+                    *line = line.trim().to_string();
+                }
+            });
+            Task::none()
+        }
+
+        // Case
+        Message::UpperCase => {
+            apply_text_transform(state, |s| s.to_uppercase());
+            Task::none()
+        }
+        Message::LowerCase => {
+            apply_text_transform(state, |s| s.to_lowercase());
+            Task::none()
+        }
+        Message::TitleCase => {
+            apply_text_transform(state, |s| {
+                let mut result = String::with_capacity(s.len());
+                let mut cap_next = true;
+                for c in s.chars() {
+                    if c.is_whitespace() || c == '-' || c == '_' {
+                        cap_next = true;
+                        result.push(c);
+                    } else if cap_next {
+                        result.extend(c.to_uppercase());
+                        cap_next = false;
+                    } else {
+                        result.extend(c.to_lowercase());
+                    }
+                }
+                result
+            });
+            Task::none()
+        }
+        Message::SentenceCase => {
+            apply_text_transform(state, |s| {
+                let mut result = String::with_capacity(s.len());
+                let mut cap_next = true;
+                for c in s.chars() {
+                    if c == '.' || c == '!' || c == '?' {
+                        cap_next = true;
+                        result.push(c);
+                    } else if cap_next && c.is_alphabetic() {
+                        result.extend(c.to_uppercase());
+                        cap_next = false;
+                    } else {
+                        result.extend(c.to_lowercase());
+                    }
+                }
+                result
+            });
+            Task::none()
+        }
+        Message::InverseCase => {
+            apply_text_transform(state, |s| {
+                s.chars()
+                    .map(|c| {
+                        if c.is_uppercase() {
+                            c.to_lowercase().to_string()
+                        } else {
+                            c.to_uppercase().to_string()
+                        }
+                    })
+                    .collect()
+            });
+            Task::none()
+        }
+
+        // Encoding / line ending
+        Message::SetEncoding(enc) => {
+            state.tab_manager.active_document_mut().encoding = enc;
+            Task::none()
+        }
+        Message::SetLineEnding(le) => {
+            state.tab_manager.active_document_mut().line_ending = le;
+            Task::none()
+        }
+
+        // ── Search ──
+        Message::ShowFind => {
+            log::info!("Show Find dialog");
+            Task::none()
+        }
+        Message::ShowReplace => {
+            log::info!("Show Replace dialog");
+            Task::none()
+        }
+        Message::ShowFindInFiles => {
+            log::info!("Show Find in Files dialog");
+            Task::none()
+        }
+        Message::SelectAllOccurrences => {
+            log::info!("Select all occurrences");
+            Task::none()
+        }
+        Message::GotoLine => {
+            log::info!("Go to line dialog");
+            Task::none()
+        }
+        Message::ToggleBookmark => {
+            let line = state.tab_manager.active_document().cursor.position.line;
+            state.tab_manager.active_document_mut().bookmarks.toggle(line);
+            Task::none()
+        }
+        Message::NextBookmark => {
+            let line = state.tab_manager.active_document().cursor.position.line;
+            if let Some(next) = state.tab_manager.active_document().bookmarks.next_bookmark(line) {
+                state.tab_manager.active_document_mut().cursor.position.line = next;
+                state.tab_manager.active_document_mut().cursor.position.col = 0;
+            }
+            Task::none()
+        }
+        Message::PrevBookmark => {
+            let line = state.tab_manager.active_document().cursor.position.line;
+            if let Some(prev) = state.tab_manager.active_document().bookmarks.prev_bookmark(line) {
+                state.tab_manager.active_document_mut().cursor.position.line = prev;
+                state.tab_manager.active_document_mut().cursor.position.col = 0;
+            }
+            Task::none()
+        }
+        Message::ClearBookmarks => {
+            state.tab_manager.active_document_mut().bookmarks.clear();
+            Task::none()
+        }
+        Message::CopyBookmarkedLines => {
+            let text = get_buffer_text(state);
+            let lines = state.tab_manager.active_document().bookmarks.bookmarked_lines(&text);
+            if !lines.is_empty() {
+                let combined = lines.join("\n");
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(combined);
+                }
+            }
+            Task::none()
+        }
+        Message::RemoveBookmarkedLines => {
+            let text = get_buffer_text(state);
+            let result = state.tab_manager.active_document().bookmarks.remove_bookmarked_lines(&text);
+            set_buffer_text(state, &result);
+            state.tab_manager.active_document_mut().bookmarks.clear();
+            Task::none()
+        }
+        Message::RemoveUnbookmarkedLines => {
+            let text = get_buffer_text(state);
+            let result = state.tab_manager.active_document().bookmarks.remove_unbookmarked_lines(&text);
+            set_buffer_text(state, &result);
+            state.tab_manager.active_document_mut().bookmarks.clear();
+            Task::none()
+        }
+
+        // ── View ──
+        Message::ToggleWordWrap => {
+            state.word_wrap = !state.word_wrap;
+            Task::none()
+        }
+        Message::ToggleLineNumbers => {
+            state.show_line_numbers = !state.show_line_numbers;
+            Task::none()
+        }
+        Message::ToggleWhitespace => {
+            state.show_whitespace = !state.show_whitespace;
+            Task::none()
+        }
+        Message::ToggleStatusBar => {
+            state.show_status_bar = !state.show_status_bar;
+            Task::none()
+        }
+        Message::ToggleMinimap => {
+            state.show_minimap = !state.show_minimap;
+            Task::none()
+        }
+        Message::ToggleFunctionList => {
+            state.show_function_list = !state.show_function_list;
+            Task::none()
+        }
+        Message::SplitHorizontal => {
+            log::info!("Split horizontal");
+            Task::none()
+        }
+        Message::SplitVertical => {
+            log::info!("Split vertical");
+            Task::none()
+        }
+        Message::RemoveSplit => {
+            log::info!("Remove split");
+            Task::none()
+        }
+        Message::ZoomIn => {
+            log::info!("Zoom in");
+            Task::none()
+        }
+        Message::ZoomOut => {
+            log::info!("Zoom out");
+            Task::none()
+        }
+        Message::ZoomReset => {
+            log::info!("Zoom reset");
+            Task::none()
+        }
+        Message::ToggleFold => {
+            log::info!("Toggle fold");
+            Task::none()
+        }
+        Message::FoldAll => {
+            log::info!("Fold all");
+            Task::none()
+        }
+        Message::UnfoldAll => {
+            log::info!("Unfold all");
+            Task::none()
+        }
+        Message::FoldLevel(level) => {
+            log::info!("Fold level {}", level);
+            Task::none()
+        }
+
+        // ── Language ──
+        Message::SetLanguage(lang) => {
+            state.tab_manager.active_document_mut().language = lang;
+            Task::none()
+        }
+
+        // ── Tools ──
+        Message::JsonFormat => {
+            let text = get_buffer_text(state);
+            match crate::tools::json_tools::format_json(&text) {
+                Ok(formatted) => set_buffer_text(state, &formatted),
+                Err(e) => log::error!("JSON format error: {}", e),
+            }
+            Task::none()
+        }
+        Message::JsonCompact => {
+            let text = get_buffer_text(state);
+            match crate::tools::json_tools::compact_json(&text) {
+                Ok(compacted) => set_buffer_text(state, &compacted),
+                Err(e) => log::error!("JSON compact error: {}", e),
+            }
+            Task::none()
+        }
+        Message::JsonValidate => {
+            let text = get_buffer_text(state);
+            match crate::tools::json_tools::validate_json(&text) {
+                Ok(()) => log::info!("JSON is valid"),
+                Err(e) => log::error!("JSON validation error: {}", e),
+            }
+            Task::none()
+        }
+        Message::JsonSortKeys => {
+            let text = get_buffer_text(state);
+            match crate::tools::json_tools::sort_json_keys(&text) {
+                Ok(sorted) => set_buffer_text(state, &sorted),
+                Err(e) => log::error!("JSON sort keys error: {}", e),
+            }
+            Task::none()
+        }
+        Message::ToggleMarkdownPreview => {
+            state.show_markdown_preview = !state.show_markdown_preview;
+            Task::none()
+        }
+        Message::ToggleCsvViewer => {
+            state.show_csv_viewer = !state.show_csv_viewer;
+            Task::none()
+        }
+        Message::MimeBase64Encode => {
+            apply_text_transform(state, crate::tools::mime_tools::base64_encode);
+            Task::none()
+        }
+        Message::MimeBase64Decode => {
+            let text = get_buffer_text(state);
+            match crate::tools::mime_tools::base64_decode(&text) {
+                Ok(decoded) => set_buffer_text(state, &decoded),
+                Err(e) => log::error!("Base64 decode error: {}", e),
+            }
+            Task::none()
+        }
+        Message::MimeUrlEncode => {
+            apply_text_transform(state, crate::tools::mime_tools::url_encode);
+            Task::none()
+        }
+        Message::MimeUrlDecode => {
+            let text = get_buffer_text(state);
+            match crate::tools::mime_tools::url_decode(&text) {
+                Ok(decoded) => set_buffer_text(state, &decoded),
+                Err(e) => log::error!("URL decode error: {}", e),
+            }
+            Task::none()
+        }
+        Message::MimeHtmlEncode => {
+            apply_text_transform(state, crate::tools::mime_tools::html_entity_encode);
+            Task::none()
+        }
+        Message::MimeHtmlDecode => {
+            apply_text_transform(state, crate::tools::mime_tools::html_entity_decode);
+            Task::none()
+        }
+        Message::MimeHexEncode => {
+            apply_text_transform(state, crate::tools::mime_tools::hex_encode);
+            Task::none()
+        }
+        Message::MimeHexDecode => {
+            let text = get_buffer_text(state);
+            match crate::tools::mime_tools::hex_decode(&text) {
+                Ok(decoded) => set_buffer_text(state, &decoded),
+                Err(e) => log::error!("Hex decode error: {}", e),
+            }
+            Task::none()
+        }
+        Message::CompareFiles => {
+            log::info!("Compare files requested");
+            Task::none()
+        }
+        Message::ToggleHexViewer => {
+            state.show_hex_viewer = !state.show_hex_viewer;
+            Task::none()
+        }
+
+        // ── Macro ──
+        Message::ToggleMacroRecording => {
+            log::info!("Toggle macro recording");
+            Task::none()
+        }
+        Message::PlayLastMacro => {
+            log::info!("Play last macro");
+            Task::none()
+        }
+        Message::PlayMacroMultiple => {
+            log::info!("Play macro multiple times");
+            Task::none()
+        }
+
+        // ── Settings ──
+        Message::ShowPreferences => {
+            log::info!("Show preferences");
+            Task::none()
+        }
+        Message::ShowKeybindings => {
+            log::info!("Show keybindings");
+            Task::none()
+        }
+
+        // ── Help ──
+        Message::ShowAbout => {
+            log::info!("Notepad+++ v{}", env!("CARGO_PKG_VERSION"));
+            Task::none()
+        }
     }
 }
 
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
-    let menu_bar = view_menu_bar();
+    let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
+
+    let dropdown: Element<'_, Message> = if let Some(ref menu_name) = state.active_menu {
+        scrollable(menu_bar::view_dropdown(state, menu_name))
+            .height(Length::Shrink)
+            .into()
+    } else {
+        column![].into()
+    };
+
     let tab_bar = view_tab_bar(state);
     let editor = view_editor(state);
-    let status_bar = view_status_bar(state);
 
-    let content = column![menu_bar, tab_bar, editor, status_bar];
+    let mut content = column![menu_bar, dropdown, tab_bar, editor];
+
+    if state.show_status_bar {
+        content = content.push(view_status_bar(state));
+    }
 
     container(content)
         .width(Length::Fill)
@@ -203,17 +947,47 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 
 pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
     keyboard::on_key_press(|key, modifiers| {
+        // Escape closes menus
+        if matches!(key.as_ref(), keyboard::Key::Named(keyboard::key::Named::Escape)) {
+            return Some(Message::MenuClose);
+        }
+
+        // Function keys
+        match key.as_ref() {
+            keyboard::Key::Named(keyboard::key::Named::F2) if modifiers.shift() => {
+                return Some(Message::PrevBookmark);
+            }
+            keyboard::Key::Named(keyboard::key::Named::F2) if modifiers.command() => {
+                return Some(Message::ToggleBookmark);
+            }
+            keyboard::Key::Named(keyboard::key::Named::F2) => {
+                return Some(Message::NextBookmark);
+            }
+            _ => {}
+        }
+
         if !modifiers.command() {
             return None;
         }
+
         match key.as_ref() {
             keyboard::Key::Character("n") if !modifiers.shift() => Some(Message::NewTab),
             keyboard::Key::Character("o") => Some(Message::OpenFile),
             keyboard::Key::Character("s") if modifiers.shift() => Some(Message::SaveAs),
             keyboard::Key::Character("s") => Some(Message::Save),
-            keyboard::Key::Character("w") => Some(Message::CloseTab(usize::MAX)), // sentinel
+            keyboard::Key::Character("w") => Some(Message::CloseTab(usize::MAX)),
             keyboard::Key::Character("z") if !modifiers.shift() => Some(Message::Undo),
             keyboard::Key::Character("y") => Some(Message::Redo),
+            keyboard::Key::Character("a") => Some(Message::SelectAll),
+            keyboard::Key::Character("f") if !modifiers.shift() => Some(Message::ShowFind),
+            keyboard::Key::Character("h") => Some(Message::ShowReplace),
+            keyboard::Key::Character("g") => Some(Message::GotoLine),
+            keyboard::Key::Character("/") => Some(Message::ToggleComment),
+            keyboard::Key::Character("j") if modifiers.shift() => Some(Message::JsonFormat),
+            keyboard::Key::Character("=") if !modifiers.shift() => Some(Message::ZoomIn),
+            keyboard::Key::Character("+") => Some(Message::ZoomIn),
+            keyboard::Key::Character("-") => Some(Message::ZoomOut),
+            keyboard::Key::Character("0") => Some(Message::ZoomReset),
             _ => None,
         }
     })
@@ -256,32 +1030,43 @@ fn save_as_dialog() -> Task<Message> {
     )
 }
 
-fn view_menu_bar<'a>() -> Element<'a, Message> {
-    let file_buttons = row![
-        menu_button("New", Message::NewTab),
-        menu_button("Open", Message::OpenFile),
-        menu_button("Save", Message::Save),
-        menu_button("Save As", Message::SaveAs),
-    ]
-    .spacing(4);
+fn get_buffer_text(state: &NotepadIced) -> String {
+    state.tab_manager.active_document().buffer.text()
+}
 
-    let edit_buttons = row![
-        menu_button("Undo", Message::Undo),
-        menu_button("Redo", Message::Redo),
-    ]
-    .spacing(4);
+fn set_buffer_text(state: &mut NotepadIced, text: &str) {
+    let doc = state.tab_manager.active_document_mut();
+    let len = doc.buffer.len_bytes();
+    if len > 0 {
+        doc.buffer.delete(0, len);
+    }
+    if !text.is_empty() {
+        doc.buffer.insert(0, text);
+    }
+    let idx = state.tab_manager.active_index();
+    state.tab_contents[idx] = TabContent::with_text(text);
+}
 
-    container(
-        row![file_buttons, Space::with_width(20), edit_buttons]
-            .spacing(4)
-            .padding(4),
-    )
-    .width(Length::Fill)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
-        ..Default::default()
-    })
-    .into()
+/// Apply a line-based transform: split text into lines, call the closure, rejoin, update buffer.
+fn apply_line_op(state: &mut NotepadIced, op: impl FnOnce(&mut Vec<String>, usize)) {
+    let text = get_buffer_text(state);
+    let cursor_line = state
+        .tab_contents
+        .get(state.tab_manager.active_index())
+        .map(|tc| tc.content.cursor_position().0)
+        .unwrap_or(0);
+
+    let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
+    op(&mut lines, cursor_line);
+    let new_text = lines.join("\n");
+    set_buffer_text(state, &new_text);
+}
+
+/// Apply a whole-text transform.
+fn apply_text_transform(state: &mut NotepadIced, transform: impl FnOnce(&str) -> String) {
+    let text = get_buffer_text(state);
+    let new_text = transform(&text);
+    set_buffer_text(state, &new_text);
 }
 
 fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
@@ -414,14 +1199,4 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         .into()
 }
 
-fn menu_button(label: &str, msg: Message) -> Element<'_, Message> {
-    button(text(label).size(13))
-        .on_press(msg)
-        .padding([4, 10])
-        .style(|_theme: &Theme, _status| button::Style {
-            background: None,
-            text_color: AppColors::TEXT,
-            ..Default::default()
-        })
-        .into()
-}
+
