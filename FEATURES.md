@@ -305,11 +305,11 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Toggle between text and hex view (Ctrl+Shift+H)
 
 ### 9.6 Binary Disassembler
-- [ ] Basic disassembly view for binary/executable files (via Capstone)
-- [ ] x86/x86-64 and ARM/AArch64 instruction decoding
-- [ ] Symbol loading and display (function names, labels)
+- [x] Basic disassembly view for binary/executable files (via Capstone)
+- [x] x86/x86-64 and ARM/AArch64 instruction decoding
+- [x] Symbol loading and display (function names, labels)
 - [ ] DIA (Debug Interface Access) symbol support on Windows
-- [ ] Navigate to address / offset
+- [x] Navigate to address / offset
 - [ ] Disassembly alongside hex view
 
 ### 9.7 Quick Hash & Encoding (Selection Tools)
