@@ -1,6 +1,6 @@
 use iced::keyboard;
 use iced::mouse;
-use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, Space};
+use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, text_input, Space};
 use iced::advanced::text::Wrapping;
 use iced::{Element, Length, Subscription, Task, Theme};
 
@@ -191,6 +191,17 @@ pub enum Message {
     TabContextClose(usize, bool),
     TabContextCloseOthers(usize, bool),
     TabContextCloseAll(bool),
+    TabContextCloseToLeft(usize, bool),
+    TabContextCloseToRight(usize, bool),
+    TabContextCloseUnmodified(bool),
+    TabContextOpenInExplorer(usize, bool),
+    TabContextOpenTerminalHere(usize, bool),
+    TabContextCopyFilename(usize, bool),
+    TabContextCopyFullPath(usize, bool),
+    TabContextRename(usize, bool),
+    TabContextRenameInput(String),
+    TabContextRenameConfirm,
+    TabContextRenameCancel,
     TabContextMoveToOtherPane(usize, bool),
     TabContextCloneToOtherView(usize, bool),
     CloseTabContextMenu,
@@ -406,6 +417,9 @@ pub struct NotepadIced {
     // Tab context menu: (tab_index, is_split_pane)
     pub tab_context_menu: Option<(usize, bool)>,
 
+    // Tab rename state: (tab_index, is_split_pane, current_input)
+    pub tab_rename: Option<(usize, bool, String)>,
+
     // Full screen mode
     pub is_fullscreen: bool,
 
@@ -500,6 +514,7 @@ impl Default for NotepadIced {
             active_pane: 0,
             theme,
             tab_context_menu: None,
+            tab_rename: None,
             is_fullscreen: false,
             last_tab_click: None,
             tab_drag: None,
@@ -550,6 +565,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::MoveTabToSplit(_) | Message::MoveTabFromSplit(_)
             | Message::TabContextMenu(_, _) | Message::TabContextClose(_, _)
             | Message::TabContextCloseOthers(_, _) | Message::TabContextCloseAll(_)
+            | Message::TabContextCloseToLeft(_, _) | Message::TabContextCloseToRight(_, _)
+            | Message::TabContextCloseUnmodified(_)
+            | Message::TabContextOpenInExplorer(_, _) | Message::TabContextOpenTerminalHere(_, _)
+            | Message::TabContextCopyFilename(_, _) | Message::TabContextCopyFullPath(_, _)
+            | Message::TabContextRename(_, _) | Message::TabContextRenameInput(_)
+            | Message::TabContextRenameConfirm | Message::TabContextRenameCancel
             | Message::TabContextMoveToOtherPane(_, _) | Message::CloseTabContextMenu
             | Message::TabContextCloneToOtherView(_, _)
             | Message::MiddleClickTab(_, _)
@@ -1843,7 +1864,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Keyboard ──
         Message::EscapePressed => {
-            if state.tab_context_menu.is_some() {
+            if state.tab_rename.is_some() {
+                state.tab_rename = None;
+            } else if state.tab_context_menu.is_some() {
                 state.tab_context_menu = None;
             } else if state.show_find {
                 state.show_find = false;
@@ -2173,6 +2196,174 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.tab_contents.clear();
                 state.tab_contents.push(TabContent::new());
             }
+            Task::none()
+        }
+        Message::TabContextCloseToLeft(idx, is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                let count_before = idx.min(state.split_tab_contents.len());
+                state.split_tab_contents.drain(..count_before);
+                state.split_tab_manager.close_tabs_to_left(idx);
+            } else {
+                let count_before = idx.min(state.tab_contents.len());
+                state.tab_contents.drain(..count_before);
+                state.tab_manager.close_tabs_to_left(idx);
+            }
+            Task::none()
+        }
+        Message::TabContextCloseToRight(idx, is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                let mut i = state.split_tab_manager.tab_count();
+                while i > idx + 1 {
+                    i -= 1;
+                    if i < state.split_tab_contents.len() {
+                        state.split_tab_contents.remove(i);
+                    }
+                    state.split_tab_manager.close_tab(i);
+                }
+            } else {
+                let mut i = state.tab_manager.tab_count();
+                while i > idx + 1 {
+                    i -= 1;
+                    if i < state.tab_contents.len() {
+                        state.tab_contents.remove(i);
+                    }
+                    state.tab_manager.close_tab(i);
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextCloseUnmodified(is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                let mut i = state.split_tab_manager.tab_count();
+                while i > 0 {
+                    i -= 1;
+                    if let Some(doc) = state.split_tab_manager.get_document(i) {
+                        if !doc.is_modified() {
+                            if i < state.split_tab_contents.len() {
+                                state.split_tab_contents.remove(i);
+                            }
+                            state.split_tab_manager.close_tab(i);
+                        }
+                    }
+                }
+                if state.split_tab_manager.tab_count() == 0 {
+                    state.split_mode = SplitMode::None;
+                    state.active_pane = 0;
+                }
+            } else {
+                let mut i = state.tab_manager.tab_count();
+                while i > 0 {
+                    i -= 1;
+                    if let Some(doc) = state.tab_manager.get_document(i) {
+                        if !doc.is_modified() {
+                            if i < state.tab_contents.len() {
+                                state.tab_contents.remove(i);
+                            }
+                            state.tab_manager.close_tab(i);
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextOpenInExplorer(idx, is_split) => {
+            state.tab_context_menu = None;
+            let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+            if let Some(doc) = mgr.get_document(idx) {
+                if let Some(ref path) = doc.path {
+                    if let Some(dir) = path.parent() {
+                        let dir = dir.to_path_buf();
+                        #[cfg(target_os = "linux")]
+                        { let _ = std::process::Command::new("xdg-open").arg(&dir).spawn(); }
+                        #[cfg(target_os = "windows")]
+                        { let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn(); }
+                        #[cfg(target_os = "macos")]
+                        { let _ = std::process::Command::new("open").arg(&dir).spawn(); }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextOpenTerminalHere(idx, is_split) => {
+            state.tab_context_menu = None;
+            let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+            if let Some(doc) = mgr.get_document(idx) {
+                if let Some(ref path) = doc.path {
+                    if let Some(dir) = path.parent() {
+                        let dir = dir.to_path_buf();
+                        #[cfg(target_os = "linux")]
+                        { let _ = std::process::Command::new("xterm").current_dir(&dir).spawn(); }
+                        #[cfg(target_os = "windows")]
+                        { let _ = std::process::Command::new("cmd.exe").current_dir(&dir).spawn(); }
+                        #[cfg(target_os = "macos")]
+                        { let _ = std::process::Command::new("open").arg("-a").arg("Terminal").arg(&dir).spawn(); }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextCopyFilename(idx, is_split) => {
+            state.tab_context_menu = None;
+            let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+            if let Some(doc) = mgr.get_document(idx) {
+                if let Some(ref path) = doc.path {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if let Ok(mut clip) = arboard::Clipboard::new() {
+                            let _ = clip.set_text(name.to_string());
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextCopyFullPath(idx, is_split) => {
+            state.tab_context_menu = None;
+            let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+            if let Some(doc) = mgr.get_document(idx) {
+                if let Some(ref path) = doc.path {
+                    if let Ok(mut clip) = arboard::Clipboard::new() {
+                        let _ = clip.set_text(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextRename(idx, is_split) => {
+            state.tab_context_menu = None;
+            let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+            let current_name = mgr.get_tab_title(idx);
+            state.tab_rename = Some((idx, is_split, current_name));
+            Task::none()
+        }
+        Message::TabContextRenameInput(val) => {
+            if let Some((idx, is_split, _)) = state.tab_rename.take() {
+                state.tab_rename = Some((idx, is_split, val));
+            }
+            Task::none()
+        }
+        Message::TabContextRenameConfirm => {
+            if let Some((idx, is_split, new_name)) = state.tab_rename.take() {
+                let mgr = if is_split { &mut state.split_tab_manager } else { &mut state.tab_manager };
+                if let Some(doc) = mgr.get_document(idx) {
+                    if let Some(ref old_path) = doc.path.clone() {
+                        let new_path = old_path.with_file_name(&new_name);
+                        if !new_name.is_empty() && new_path != *old_path {
+                            if std::fs::rename(old_path, &new_path).is_ok() {
+                                if let Some(doc_mut) = mgr.get_document_mut(idx) {
+                                    doc_mut.path = Some(new_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextRenameCancel => {
+            state.tab_rename = None;
             Task::none()
         }
         Message::TabContextMoveToOtherPane(idx, is_split) => {
@@ -2765,6 +2956,208 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                 .into(),
         );
 
+        menu_items.push(
+            button(text("Close All to the Left").size(13))
+                .on_press(Message::TabContextCloseToLeft(tab_idx, is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        menu_items.push(
+            button(text("Close All to the Right").size(13))
+                .on_press(Message::TabContextCloseToRight(tab_idx, is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        menu_items.push(
+            button(text("Close All Without Changes").size(13))
+                .on_press(Message::TabContextCloseUnmodified(is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        // Separator
+        menu_items.push(
+            container(Space::new(Length::Fill, 1))
+                .width(Length::Fill)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_border)),
+                    ..Default::default()
+                })
+                .padding([4, 8])
+                .into(),
+        );
+
+        // File operations (only for tabs with a file path)
+        let mgr = if is_split { &state.split_tab_manager } else { &state.tab_manager };
+        let has_path = mgr.get_document(tab_idx).and_then(|d| d.path.as_ref()).is_some();
+
+        if has_path {
+            menu_items.push(
+                button(text("Open in File Manager").size(13))
+                    .on_press(Message::TabContextOpenInExplorer(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+
+            menu_items.push(
+                button(text("Open Terminal Here").size(13))
+                    .on_press(Message::TabContextOpenTerminalHere(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+
+            // Separator
+            menu_items.push(
+                container(Space::new(Length::Fill, 1))
+                    .width(Length::Fill)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(t_border)),
+                        ..Default::default()
+                    })
+                    .padding([4, 8])
+                    .into(),
+            );
+
+            menu_items.push(
+                button(text("Copy Filename").size(13))
+                    .on_press(Message::TabContextCopyFilename(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+
+            menu_items.push(
+                button(text("Copy Full Path").size(13))
+                    .on_press(Message::TabContextCopyFullPath(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+
+            // Separator
+            menu_items.push(
+                container(Space::new(Length::Fill, 1))
+                    .width(Length::Fill)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(t_border)),
+                        ..Default::default()
+                    })
+                    .padding([4, 8])
+                    .into(),
+            );
+
+            menu_items.push(
+                button(text("Rename").size(13))
+                    .on_press(Message::TabContextRename(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+        }
+
         let context_menu = container(
             column(menu_items).spacing(0).padding(4).width(Length::Fixed(200.0)),
         )
@@ -2790,6 +3183,93 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             .into();
 
         layers.push(context_overlay);
+    }
+
+    // Rename dialog overlay
+    if let Some((_, _, ref rename_input)) = state.tab_rename {
+        let t_menu_bg = state.theme.menu_bg;
+        let t_text = state.theme.text;
+        let t_border = state.theme.border;
+        let t_menu_hover = state.theme.menu_hover;
+        let rename_val = rename_input.clone();
+
+        let backdrop: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::TabContextRenameCancel)
+        .into();
+        layers.push(backdrop);
+
+        let rename_dialog = container(
+            column![
+                text("Rename File").size(14),
+                text_input("New filename...", &rename_val)
+                    .on_input(Message::TabContextRenameInput)
+                    .on_submit(Message::TabContextRenameConfirm)
+                    .size(13)
+                    .padding(4),
+                row![
+                    button(text("Rename").size(12))
+                        .on_press(Message::TabContextRenameConfirm)
+                        .padding([3, 10])
+                        .style(move |_theme: &Theme, status| {
+                            let bg = match status {
+                                button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                                _ => Some(iced::Background::Color(t_menu_bg)),
+                            };
+                            button::Style {
+                                background: bg,
+                                text_color: t_text,
+                                border: iced::Border { color: t_border, width: 1.0, radius: 3.0.into() },
+                                ..Default::default()
+                            }
+                        }),
+                    button(text("Cancel").size(12))
+                        .on_press(Message::TabContextRenameCancel)
+                        .padding([3, 10])
+                        .style(move |_theme: &Theme, status| {
+                            let bg = match status {
+                                button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                                _ => Some(iced::Background::Color(t_menu_bg)),
+                            };
+                            button::Style {
+                                background: bg,
+                                text_color: t_text,
+                                border: iced::Border { color: t_border, width: 1.0, radius: 3.0.into() },
+                                ..Default::default()
+                            }
+                        }),
+                ].spacing(8),
+            ]
+            .spacing(8)
+            .padding(16)
+            .width(Length::Fixed(300.0)),
+        )
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_menu_bg)),
+            border: iced::Border { color: t_border, width: 1.0, radius: 6.0.into() },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                offset: iced::Vector::new(2.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+        let rename_overlay: Element<'_, Message> = container(opaque(rename_dialog))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into();
+
+        layers.push(rename_overlay);
     }
 
     stack(layers).into()

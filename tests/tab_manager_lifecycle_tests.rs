@@ -177,3 +177,91 @@ fn get_document_mut_can_modify() {
     }
     assert_eq!(mgr.get_document(0).unwrap().buffer.text(), "hello");
 }
+
+// ── close_tabs_to_left ──
+
+#[test]
+fn close_tabs_to_left_removes_tabs_before_index() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab(); // idx 1
+    mgr.new_tab(); // idx 2
+    mgr.new_tab(); // idx 3
+    assert_eq!(mgr.tab_count(), 4);
+    mgr.close_tabs_to_left(2);
+    assert_eq!(mgr.tab_count(), 2);
+}
+
+#[test]
+fn close_tabs_to_left_at_zero_does_nothing() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    mgr.new_tab();
+    assert_eq!(mgr.tab_count(), 3);
+    mgr.close_tabs_to_left(0);
+    assert_eq!(mgr.tab_count(), 3);
+}
+
+#[test]
+fn close_tabs_to_left_adjusts_active_tab() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    mgr.new_tab();
+    mgr.set_active(0); // active is before the kept index
+    mgr.close_tabs_to_left(2);
+    assert_eq!(mgr.active_index(), 0); // snaps to 0
+}
+
+#[test]
+fn close_tabs_to_left_active_after_index_adjusts() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab(); // 1
+    mgr.new_tab(); // 2
+    mgr.new_tab(); // 3
+    mgr.set_active(3);
+    mgr.close_tabs_to_left(2);
+    assert_eq!(mgr.active_index(), 1); // 3 - 2 = 1
+}
+
+#[test]
+fn close_tabs_to_left_out_of_bounds_does_nothing() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    assert_eq!(mgr.tab_count(), 2);
+    mgr.close_tabs_to_left(10);
+    assert_eq!(mgr.tab_count(), 2);
+}
+
+// ── close_unmodified ──
+
+#[test]
+fn close_unmodified_removes_unmodified_tabs() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    mgr.new_tab();
+    // All tabs are unmodified, so should end up with 1 new untitled tab
+    mgr.close_unmodified();
+    assert_eq!(mgr.tab_count(), 1);
+}
+
+#[test]
+fn close_unmodified_keeps_modified_tabs() {
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    // Modify tab 1
+    mgr.get_document_mut(1).unwrap().buffer.insert(0, "changed");
+    assert_eq!(mgr.tab_count(), 2);
+    mgr.close_unmodified();
+    assert_eq!(mgr.tab_count(), 1);
+    assert!(mgr.get_document(0).unwrap().is_modified());
+}
+
+#[test]
+fn close_unmodified_all_modified_keeps_all() {
+    let mut mgr = TabManager::new();
+    mgr.get_document_mut(0).unwrap().buffer.insert(0, "a");
+    mgr.new_tab();
+    mgr.get_document_mut(1).unwrap().buffer.insert(0, "b");
+    assert_eq!(mgr.tab_count(), 2);
+    mgr.close_unmodified();
+    assert_eq!(mgr.tab_count(), 2);
+}

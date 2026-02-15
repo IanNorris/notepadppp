@@ -144,6 +144,41 @@ impl TabManager {
         Some(doc)
     }
 
+    /// Close all tabs before `index`, keeping `index` and everything after.
+    pub fn close_tabs_to_left(&mut self, index: usize) {
+        if index == 0 || index >= self.tabs.len() {
+            return;
+        }
+        self.tabs.drain(..index);
+        self.untitled_names.drain(..index);
+        if self.active_tab < index {
+            self.active_tab = 0;
+        } else {
+            self.active_tab -= index;
+        }
+    }
+
+    /// Close all unmodified tabs. If all tabs are unmodified, leaves a single new untitled tab.
+    pub fn close_unmodified(&mut self) {
+        let mut i = self.tabs.len();
+        while i > 0 {
+            i -= 1;
+            if !self.tabs[i].is_modified() {
+                self.tabs.remove(i);
+                self.untitled_names.remove(i);
+                if self.active_tab > i && self.active_tab > 0 {
+                    self.active_tab -= 1;
+                }
+            }
+        }
+        if self.tabs.is_empty() {
+            self.active_tab = 0;
+            self.new_tab();
+        } else if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+    }
+
     /// Close all tabs, replacing with a single new untitled tab.
     pub fn close_all(&mut self) {
         self.tabs.clear();
