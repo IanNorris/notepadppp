@@ -192,3 +192,121 @@ fn test_disasm_line_bytes_match_instruction() {
     assert_eq!(lines[0].mnemonic, "sub");
     assert_eq!(lines[0].bytes, vec![0x48, 0x83, 0xec, 0x20]);
 }
+
+#[test]
+fn test_pe_file_loading() {
+    // Cross-compile a small test program to PE
+    let dir = tempfile::tempdir().unwrap();
+    let c_path = dir.path().join("test.c");
+    let exe_path = dir.path().join("test.exe");
+
+    std::fs::write(&c_path, r#"
+        int add(int a, int b) { return a + b; }
+        int multiply(int a, int b) { return a * b; }
+        int main() { return add(1, 2) + multiply(3, 4); }
+    "#).unwrap();
+
+    let output = std::process::Command::new("x86_64-w64-mingw32-gcc")
+        .args(["-g", "-O0", "-o"])
+        .arg(&exe_path)
+        .arg(&c_path)
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let disasm = Disassembler::from_file(&exe_path).expect("Failed to load PE");
+            assert_eq!(disasm.arch(), DisasmArch::X86_64);
+            assert!(!disasm.bytes().is_empty(), "PE .text should have bytes");
+
+            // Should have COFF symbols including our functions
+            let syms = disasm.symbols();
+            assert!(!syms.is_empty(), "PE should have COFF symbols");
+
+            let has_main = syms.iter().any(|s| s.name == "main");
+            let has_add = syms.iter().any(|s| s.name == "add");
+            let has_multiply = syms.iter().any(|s| s.name == "multiply");
+            assert!(has_main, "Should find 'main' symbol, got: {:?}",
+                syms.iter().map(|s| &s.name).collect::<Vec<_>>());
+            assert!(has_add, "Should find 'add' symbol");
+            assert!(has_multiply, "Should find 'multiply' symbol");
+
+            // Should disassemble at entry point
+            let lines = disasm.disassemble_range(0, 20);
+            assert!(!lines.is_empty(), "Should disassemble PE .text");
+            assert!(lines[0].mnemonic.len() > 0, "Instructions should have mnemonics");
+
+            // Go to a symbol by name
+            let add_sym = disasm.find_symbol("add").expect("Should find add symbol");
+            let add_lines = disasm.disassemble_at_address(add_sym.address, 5);
+            assert!(!add_lines.is_empty(), "Should disassemble at 'add' address");
+        }
+        _ => {
+            eprintln!("Skipping PE test: x86_64-w64-mingw32-gcc not available");
+        }
+    }
+}
+
+#[test]
+fn test_pe_coff_symbol_addresses_are_virtual() {
+    // Ensure COFF symbols have proper virtual addresses (image_base + section VA + value)
+    let dir = tempfile::tempdir().unwrap();
+    let c_path = dir.path().join("test.c");
+    let exe_path = dir.path().join("test.exe");
+
+    std::fs::write(&c_path, "int myfunc(void) { return 42; } int main() { return myfunc(); }").unwrap();
+
+    let output = std::process::Command::new("x86_64-w64-mingw32-gcc")
+        .args(["-g", "-O0", "-o"])
+        .arg(&exe_path)
+        .arg(&c_path)
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let disasm = Disassembler::from_file(&exe_path).expect("Failed to load PE");
+            if let Some(sym) = disasm.find_symbol("myfunc") {
+                // Symbol address should be >= base_address (in virtual address space)
+                assert!(sym.address >= disasm.base_address(),
+                    "Symbol address 0x{:X} should be >= base 0x{:X}",
+                    sym.address, disasm.base_address());
+                // Should be able to disassemble at that address
+                let lines = disasm.disassemble_at_address(sym.address, 3);
+                assert!(!lines.is_empty(), "Should disassemble at myfunc");
+            }
+        }
+        _ => {
+            eprintln!("Skipping PE COFF test: mingw not available");
+        }
+    }
+}
+
+#[test]
+fn test_find_symbol_prefers_exact_match() {
+    // find_symbol should prefer exact case-insensitive match over substring
+    let dir = tempfile::tempdir().unwrap();
+    let c_path = dir.path().join("test.c");
+    let exe_path = dir.path().join("test.exe");
+
+    std::fs::write(&c_path, r#"
+        int submain(void) { return 1; }
+        int main() { return submain(); }
+    "#).unwrap();
+
+    let output = std::process::Command::new("x86_64-w64-mingw32-gcc")
+        .args(["-g", "-O0", "-o"])
+        .arg(&exe_path)
+        .arg(&c_path)
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let disasm = Disassembler::from_file(&exe_path).expect("Failed to load PE");
+            // "main" should match exactly "main", not "__tmainCRTStartup" or "submain"
+            let sym = disasm.find_symbol("main").expect("Should find main");
+            assert_eq!(sym.name, "main", "Should prefer exact match, got: {}", sym.name);
+        }
+        _ => {
+            eprintln!("Skipping exact match test: mingw not available");
+        }
+    }
+}

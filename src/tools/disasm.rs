@@ -124,18 +124,30 @@ impl Disassembler {
                     DisasmArch::X86_32
                 };
 
+                let image_base = pe.image_base as u64;
+
+                // Collect export symbols
                 let mut symbols = Vec::new();
                 for export in &pe.exports {
                     if let Some(name) = export.name {
                         symbols.push(Symbol {
                             name: name.to_string(),
-                            address: export.rva as u64,
+                            address: image_base + export.rva as u64,
                             size: 0,
                         });
                     }
                 }
 
-                let image_base = pe.image_base as u64;
+                // Parse COFF symbol table from PE header
+                Self::parse_pe_coff_symbols(&data, image_base, &pe.sections, &mut symbols);
+
+                // Try loading companion PDB file
+                if let Some(pdb_path) = Self::find_pdb_path(path, &data) {
+                    if let Err(e) = Self::load_pdb_symbols(&pdb_path, image_base, &mut symbols) {
+                        eprintln!("PDB loading note: {}", e);
+                    }
+                }
+
                 let entry = image_base + pe.entry as u64;
 
                 // Find .text section
@@ -171,7 +183,6 @@ impl Disassembler {
                         Self::from_macho(&macho, &data)
                     }
                     goblin::mach::Mach::Fat(fat) => {
-                        // Use the first architecture from a fat binary
                         let arches = fat.arches().map_err(|e| format!("Fat Mach-O error: {}", e))?;
                         if let Some(arch) = arches.first() {
                             let bytes = &data[arch.offset as usize..(arch.offset + arch.size) as usize];
@@ -194,6 +205,362 @@ impl Disassembler {
                 })
             }
         }
+    }
+
+    /// Parse COFF symbol table embedded in a PE file.
+    fn parse_pe_coff_symbols(
+        data: &[u8],
+        image_base: u64,
+        sections: &[goblin::pe::section_table::SectionTable],
+        symbols: &mut Vec<Symbol>,
+    ) {
+        // PE header at offset stored at 0x3C
+        if data.len() < 0x40 {
+            return;
+        }
+        let pe_offset = u32::from_le_bytes([data[0x3C], data[0x3D], data[0x3E], data[0x3F]]) as usize;
+        if pe_offset + 24 > data.len() {
+            return;
+        }
+
+        // COFF header starts at pe_offset + 4 (after "PE\0\0" signature)
+        let coff_start = pe_offset + 4;
+        if coff_start + 20 > data.len() {
+            return;
+        }
+
+        let num_symbols = u32::from_le_bytes([
+            data[coff_start + 12],
+            data[coff_start + 13],
+            data[coff_start + 14],
+            data[coff_start + 15],
+        ]) as usize;
+
+        let sym_table_offset = u32::from_le_bytes([
+            data[coff_start + 8],
+            data[coff_start + 9],
+            data[coff_start + 10],
+            data[coff_start + 11],
+        ]) as usize;
+
+        if num_symbols == 0 || sym_table_offset == 0 {
+            return;
+        }
+
+        // String table is right after symbol table (each symbol entry is 18 bytes)
+        let str_table_offset = sym_table_offset + num_symbols * 18;
+
+        let mut i = 0;
+        while i < num_symbols {
+            let entry_offset = sym_table_offset + i * 18;
+            if entry_offset + 18 > data.len() {
+                break;
+            }
+
+            let section_number = i16::from_le_bytes([
+                data[entry_offset + 12],
+                data[entry_offset + 13],
+            ]);
+            let storage_class = data[entry_offset + 16];
+            let aux_count = data[entry_offset + 17] as usize;
+            let value = u32::from_le_bytes([
+                data[entry_offset + 8],
+                data[entry_offset + 9],
+                data[entry_offset + 10],
+                data[entry_offset + 11],
+            ]);
+
+            // Only include function symbols (storage class 2=external, 3=static) in code sections
+            if (storage_class == 2 || storage_class == 3) && section_number > 0 {
+                // Get symbol name
+                let name = if data[entry_offset] == 0
+                    && data[entry_offset + 1] == 0
+                    && data[entry_offset + 2] == 0
+                    && data[entry_offset + 3] == 0
+                {
+                    // Long name: offset into string table
+                    let str_offset = u32::from_le_bytes([
+                        data[entry_offset + 4],
+                        data[entry_offset + 5],
+                        data[entry_offset + 6],
+                        data[entry_offset + 7],
+                    ]) as usize;
+                    let abs_offset = str_table_offset + str_offset;
+                    if abs_offset < data.len() {
+                        let end = data[abs_offset..]
+                            .iter()
+                            .position(|&b| b == 0)
+                            .unwrap_or(0);
+                        String::from_utf8_lossy(&data[abs_offset..abs_offset + end]).to_string()
+                    } else {
+                        i += 1 + aux_count;
+                        continue;
+                    }
+                } else {
+                    // Short name: inline 8-byte field
+                    let end = data[entry_offset..entry_offset + 8]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(8);
+                    String::from_utf8_lossy(&data[entry_offset..entry_offset + end]).to_string()
+                };
+
+                if !name.is_empty() && !name.starts_with('.') {
+                    // Convert section-relative value to virtual address
+                    let section_idx = (section_number - 1) as usize;
+                    let vaddr = if section_idx < sections.len() {
+                        image_base + sections[section_idx].virtual_address as u64 + value as u64
+                    } else {
+                        image_base + value as u64
+                    };
+
+                    // Avoid duplicates
+                    if !symbols.iter().any(|s| s.address == vaddr && s.name == name) {
+                        symbols.push(Symbol {
+                            name,
+                            address: vaddr,
+                            size: 0,
+                        });
+                    }
+                }
+            }
+
+            i += 1 + aux_count;
+        }
+    }
+
+    /// Find companion PDB path from PE debug directory or by filename convention.
+    fn find_pdb_path(exe_path: &Path, data: &[u8]) -> Option<std::path::PathBuf> {
+        // Try to extract PDB path from PE debug directory (CodeView entry)
+        if let Some(pdb_name) = Self::extract_pdb_path_from_pe(data) {
+            // Try the embedded absolute path first
+            let embedded = Path::new(&pdb_name);
+            if embedded.exists() {
+                return Some(embedded.to_path_buf());
+            }
+            // Try relative to the exe directory
+            if let Some(dir) = exe_path.parent() {
+                let filename = Path::new(&pdb_name)
+                    .file_name()
+                    .unwrap_or_default();
+                let relative = dir.join(filename);
+                if relative.exists() {
+                    return Some(relative);
+                }
+            }
+        }
+
+        // Fallback: try same name with .pdb extension
+        if let Some(dir) = exe_path.parent() {
+            if let Some(stem) = exe_path.file_stem() {
+                let pdb_path = dir.join(format!("{}.pdb", stem.to_string_lossy()));
+                if pdb_path.exists() {
+                    return Some(pdb_path);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Extract PDB file path from PE CodeView debug directory entry.
+    fn extract_pdb_path_from_pe(data: &[u8]) -> Option<String> {
+        if data.len() < 0x40 {
+            return None;
+        }
+        let pe_offset = u32::from_le_bytes([data[0x3C], data[0x3D], data[0x3E], data[0x3F]]) as usize;
+
+        // Determine optional header size
+        let coff_start = pe_offset + 4;
+        if coff_start + 20 > data.len() {
+            return None;
+        }
+        let opt_header_size = u16::from_le_bytes([
+            data[coff_start + 16],
+            data[coff_start + 17],
+        ]) as usize;
+
+        let opt_start = coff_start + 20;
+        if opt_start + opt_header_size > data.len() {
+            return None;
+        }
+
+        // Check PE32 vs PE32+
+        let magic = u16::from_le_bytes([data[opt_start], data[opt_start + 1]]);
+        let debug_dir_entry_offset = match magic {
+            0x10b => opt_start + 144, // PE32: data dir at offset 96, debug is entry 6
+            0x20b => opt_start + 160, // PE32+: data dir at offset 112, debug is entry 6
+            _ => return None,
+        };
+
+        if debug_dir_entry_offset + 8 > data.len() {
+            return None;
+        }
+
+        let debug_rva = u32::from_le_bytes([
+            data[debug_dir_entry_offset],
+            data[debug_dir_entry_offset + 1],
+            data[debug_dir_entry_offset + 2],
+            data[debug_dir_entry_offset + 3],
+        ]);
+        let debug_size = u32::from_le_bytes([
+            data[debug_dir_entry_offset + 4],
+            data[debug_dir_entry_offset + 5],
+            data[debug_dir_entry_offset + 6],
+            data[debug_dir_entry_offset + 7],
+        ]);
+
+        if debug_rva == 0 || debug_size == 0 {
+            return None;
+        }
+
+        // We need to convert RVA to file offset using sections
+        // Re-parse sections quickly
+        let num_sections = u16::from_le_bytes([
+            data[coff_start + 2],
+            data[coff_start + 3],
+        ]) as usize;
+
+        let sections_start = opt_start + opt_header_size;
+
+        let rva_to_offset = |rva: u32| -> Option<usize> {
+            for i in 0..num_sections {
+                let sec_off = sections_start + i * 40;
+                if sec_off + 40 > data.len() {
+                    break;
+                }
+                let sec_va = u32::from_le_bytes([
+                    data[sec_off + 12], data[sec_off + 13],
+                    data[sec_off + 14], data[sec_off + 15],
+                ]);
+                let sec_raw_size = u32::from_le_bytes([
+                    data[sec_off + 16], data[sec_off + 17],
+                    data[sec_off + 18], data[sec_off + 19],
+                ]);
+                let sec_raw_ptr = u32::from_le_bytes([
+                    data[sec_off + 20], data[sec_off + 21],
+                    data[sec_off + 22], data[sec_off + 23],
+                ]);
+                if rva >= sec_va && rva < sec_va + sec_raw_size {
+                    return Some((sec_raw_ptr + (rva - sec_va)) as usize);
+                }
+            }
+            None
+        };
+
+        let debug_file_offset = rva_to_offset(debug_rva)?;
+
+        // Parse debug directory entries (each 28 bytes)
+        let num_entries = debug_size as usize / 28;
+        for i in 0..num_entries {
+            let entry_off = debug_file_offset + i * 28;
+            if entry_off + 28 > data.len() {
+                break;
+            }
+            let entry_type = u32::from_le_bytes([
+                data[entry_off + 12], data[entry_off + 13],
+                data[entry_off + 14], data[entry_off + 15],
+            ]);
+
+            // Type 2 = IMAGE_DEBUG_TYPE_CODEVIEW
+            if entry_type == 2 {
+                let cv_offset = u32::from_le_bytes([
+                    data[entry_off + 24], data[entry_off + 25],
+                    data[entry_off + 26], data[entry_off + 27],
+                ]) as usize;
+
+                if cv_offset + 24 > data.len() {
+                    continue;
+                }
+
+                // Check for RSDS signature
+                if &data[cv_offset..cv_offset + 4] == b"RSDS" {
+                    // PDB path starts at offset 24 (after signature + GUID + age)
+                    let path_start = cv_offset + 24;
+                    let path_end = data[path_start..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .map(|p| path_start + p)
+                        .unwrap_or(data.len().min(path_start + 260));
+                    return Some(
+                        String::from_utf8_lossy(&data[path_start..path_end]).to_string(),
+                    );
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Load symbols from a PDB file.
+    fn load_pdb_symbols(
+        pdb_path: &Path,
+        image_base: u64,
+        symbols: &mut Vec<Symbol>,
+    ) -> Result<(), String> {
+        use pdb::FallibleIterator;
+
+        let file = std::fs::File::open(pdb_path)
+            .map_err(|e| format!("Failed to open PDB: {}", e))?;
+        let mut pdb = pdb::PDB::open(file)
+            .map_err(|e| format!("Failed to parse PDB: {}", e))?;
+
+        // Get the global symbols
+        let symbol_table = pdb.global_symbols()
+            .map_err(|e| format!("Failed to read PDB global symbols: {}", e))?;
+        let address_map = pdb.address_map()
+            .map_err(|e| format!("Failed to read PDB address map: {}", e))?;
+
+        let mut iter = symbol_table.iter();
+        while let Some(symbol) = iter.next().map_err(|e| format!("PDB symbol iter error: {}", e))? {
+            if let Ok(pdb::SymbolData::Public(pub_sym)) = symbol.parse() {
+                if let Some(rva) = pub_sym.offset.to_rva(&address_map) {
+                    let name = pub_sym.name.to_string().to_string();
+                    if !name.is_empty() {
+                        let addr = image_base + rva.0 as u64;
+                        if !symbols.iter().any(|s| s.address == addr && s.name == name) {
+                            symbols.push(Symbol {
+                                name,
+                                address: addr,
+                                size: 0,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also try to get procedure symbols (functions with size info)
+        if let Ok(dbi) = pdb.debug_information() {
+            if let Ok(mut modules) = dbi.modules() {
+                while let Ok(Some(module)) = modules.next() {
+                    if let Ok(Some(module_info)) = pdb.module_info(&module) {
+                        if let Ok(symbols_iter) = module_info.symbols() {
+                            let mut sym_iter = symbols_iter;
+                            while let Ok(Some(symbol)) = sym_iter.next() {
+                                if let Ok(pdb::SymbolData::Procedure(proc)) = symbol.parse() {
+                                    if let Some(rva) = proc.offset.to_rva(&address_map) {
+                                        let name = proc.name.to_string().to_string();
+                                        if !name.is_empty() {
+                                            let addr = image_base + rva.0 as u64;
+                                            if !symbols.iter().any(|s| s.address == addr) {
+                                                symbols.push(Symbol {
+                                                    name,
+                                                    address: addr,
+                                                    size: proc.len as u64,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn from_macho(macho: &goblin::mach::MachO, data: &[u8]) -> Result<Self, String> {
@@ -280,7 +647,9 @@ impl Disassembler {
     /// Find a symbol by name (case-insensitive substring match).
     pub fn find_symbol(&self, name: &str) -> Option<&Symbol> {
         let lower = name.to_lowercase();
-        self.symbols.iter().find(|s| s.name.to_lowercase().contains(&lower))
+        // Prefer exact match (case-insensitive), fall back to substring
+        self.symbols.iter().find(|s| s.name.to_lowercase() == lower)
+            .or_else(|| self.symbols.iter().find(|s| s.name.to_lowercase().contains(&lower)))
     }
 
     /// Find the symbol containing the given address.

@@ -651,7 +651,13 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
                 let is_binary = doc.is_binary;
                 let buf_text = doc.buffer.text();
                 state.fold_manager.detect_regions(&buf_text);
-                state.tab_contents.push(TabContent::with_text(&buf_text));
+                // For binary files, use placeholder text instead of loading
+                // the full binary content into iced's text_editor
+                if is_binary {
+                    state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                } else {
+                    state.tab_contents.push(TabContent::with_text(&buf_text));
+                }
                 // Auto-show disassembler for binary files
                 if is_binary {
                     if let Some(ref p) = state.tab_manager.active_document().path {
@@ -706,8 +712,13 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
                     doc.read_only = true;
                 }
                 let buf_text = doc.buffer.text();
+                let is_binary = doc.is_binary;
                 state.fold_manager.detect_regions(&buf_text);
-                state.tab_contents.push(TabContent::with_text(&buf_text));
+                if is_binary {
+                    state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                } else {
+                    state.tab_contents.push(TabContent::with_text(&buf_text));
+                }
                 opened_any = true;
             }
             Err(e) => {
@@ -851,9 +862,14 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 match state.tab_manager.open_file(path) {
                     Ok(idx) => {
                         let doc = state.tab_manager.get_document(idx).unwrap();
+                        let is_binary = doc.is_binary;
                         let buf_text = doc.buffer.text();
                         state.fold_manager.detect_regions(&buf_text);
-                        state.tab_contents.push(TabContent::with_text(&buf_text));
+                        if is_binary {
+                            state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                        } else {
+                            state.tab_contents.push(TabContent::with_text(&buf_text));
+                        }
                     }
                     Err(_) => {
                         state.tab_manager.new_tab();
@@ -2230,8 +2246,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                         match state.tab_manager.open_file(sf.path.clone()) {
                             Ok(idx) => {
                                 let doc = state.tab_manager.get_document(idx).unwrap();
+                                let is_binary = doc.is_binary;
                                 let buf_text = doc.buffer.text();
-                                state.tab_contents.push(TabContent::with_text(&buf_text));
+                                if is_binary {
+                                    state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                                } else {
+                                    state.tab_contents.push(TabContent::with_text(&buf_text));
+                                }
                             }
                             Err(_) => {
                                 state.tab_manager.new_tab();
