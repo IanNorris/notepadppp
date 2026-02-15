@@ -91,18 +91,18 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [x] Named groups
 
 ### 3.4 Mark & Bookmarks
-- [ ] Mark all matches (persistent highlighting)
-- [ ] Bookmark lines matching search
+- [x] Mark all matches (persistent highlighting)
+- [x] Bookmark lines matching search
 - [x] Navigate between bookmarks (F2 / Shift+F2)
-- [ ] Copy/cut all bookmarked lines
+- [x] Copy/cut all bookmarked lines
 - [x] Remove all bookmarked/unbookmarked lines
 - [x] Toggle bookmark on current line
 
 ### 3.5 Search Results History Panel
-- [ ] Panel showing all matching lines from searches
-- [ ] Clickable results to jump to location
-- [ ] Search history (previous searches re-runnable)
-- [ ] Collapsible results per search
+- [x] Panel showing all matching lines from searches
+- [x] Clickable results to jump to location
+- [x] Search history (previous searches re-runnable)
+- [x] Collapsible results per search
 
 ---
 
