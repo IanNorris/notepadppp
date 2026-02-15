@@ -236,3 +236,87 @@ fn test_toggle_comment_roundtrip() {
     let uncommented = toggle_comment_line(&commented, "//");
     assert_eq!(uncommented, original);
 }
+
+// =====================================================
+// Additional comment language coverage
+// =====================================================
+
+#[test]
+fn test_line_comment_prefix_scala() {
+    assert_eq!(comments::line_comment_prefix("Scala"), Some("//"));
+}
+
+#[test]
+fn test_line_comment_prefix_zig() {
+    assert_eq!(comments::line_comment_prefix("Zig"), Some("//"));
+}
+
+#[test]
+fn test_line_comment_prefix_haskell() {
+    assert_eq!(comments::line_comment_prefix("Haskell"), Some("--"));
+}
+
+#[test]
+fn test_line_comment_prefix_sql() {
+    assert_eq!(comments::line_comment_prefix("SQL"), Some("--"));
+}
+
+#[test]
+fn test_line_comment_prefix_objective_c() {
+    assert_eq!(comments::line_comment_prefix("Objective-C"), Some("//"));
+}
+
+#[test]
+fn test_block_comment_delimiters_c() {
+    assert_eq!(comments::block_comment_delimiters("C"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_cpp() {
+    assert_eq!(comments::block_comment_delimiters("C++"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_java() {
+    assert_eq!(comments::block_comment_delimiters("Java"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_go() {
+    assert_eq!(comments::block_comment_delimiters("Go"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_kotlin() {
+    assert_eq!(comments::block_comment_delimiters("Kotlin"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_swift() {
+    assert_eq!(comments::block_comment_delimiters("Swift"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_csharp() {
+    assert_eq!(comments::block_comment_delimiters("C#"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_css() {
+    assert_eq!(comments::block_comment_delimiters("CSS"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_xml() {
+    assert_eq!(comments::block_comment_delimiters("XML"), Some(("<!--", "-->")));
+}
+
+#[test]
+fn test_block_comment_delimiters_scala() {
+    assert_eq!(comments::block_comment_delimiters("Scala"), Some(("/*", "*/")));
+}
+
+#[test]
+fn test_block_comment_delimiters_dart() {
+    assert_eq!(comments::block_comment_delimiters("Dart"), Some(("/*", "*/")));
+}

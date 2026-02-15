@@ -266,3 +266,258 @@ fn insert_and_delete_unicode() {
     buf.delete(3, 5);
     assert_eq!(buf.text(), "caf");
 }
+
+// =====================================================
+// Additional coverage tests
+// =====================================================
+
+#[test]
+fn from_reader_basic() {
+    use std::io::Cursor;
+    let data = "hello from reader";
+    let cursor = Cursor::new(data.as_bytes());
+    let buf = TextBuffer::from_reader(cursor).unwrap();
+    assert_eq!(buf.text(), "hello from reader");
+    assert!(!buf.is_modified());
+}
+
+#[test]
+fn from_reader_multiline() {
+    use std::io::Cursor;
+    let data = "line1\nline2\nline3";
+    let cursor = Cursor::new(data.as_bytes());
+    let buf = TextBuffer::from_reader(cursor).unwrap();
+    assert_eq!(buf.text(), "line1\nline2\nline3");
+    assert_eq!(buf.line_count(), 3);
+}
+
+#[test]
+fn from_reader_empty() {
+    use std::io::Cursor;
+    let cursor = Cursor::new(b"" as &[u8]);
+    let buf = TextBuffer::from_reader(cursor).unwrap();
+    assert_eq!(buf.text(), "");
+    assert!(buf.is_empty());
+}
+
+#[test]
+fn set_undo_limit_caps_stack() {
+    let mut buf = TextBuffer::new();
+    buf.insert(0, "a");
+    buf.insert(1, "b");
+    buf.insert(2, "c");
+    buf.insert(3, "d");
+    buf.insert(4, "e");
+    // 5 edits on undo stack now
+    buf.set_undo_limit(Some(2));
+    // Only last 2 should remain
+    assert!(buf.undo()); // undo "e"
+    assert!(buf.undo()); // undo "d"
+    assert!(!buf.undo()); // stack should be empty now
+}
+
+#[test]
+fn set_undo_limit_enforced_on_insert() {
+    let mut buf = TextBuffer::new();
+    buf.set_undo_limit(Some(3));
+    for i in 0..10 {
+        buf.insert(i, "x");
+    }
+    // Only 3 undos should be possible
+    let mut count = 0;
+    while buf.undo() {
+        count += 1;
+    }
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn set_undo_limit_none_unlimited() {
+    let mut buf = TextBuffer::new();
+    buf.set_undo_limit(Some(2));
+    buf.set_undo_limit(None);
+    for i in 0..10 {
+        buf.insert(i, "x");
+    }
+    let mut count = 0;
+    while buf.undo() {
+        count += 1;
+    }
+    assert_eq!(count, 10);
+}
+
+#[test]
+fn line_len_chars_basic() {
+    let buf = TextBuffer::from_str("hello\nworld");
+    assert!(buf.line_len_chars(0) > 0);
+    assert!(buf.line_len_chars(1) > 0);
+}
+
+#[test]
+fn line_len_chars_unicode_line() {
+    let buf = TextBuffer::from_str("café\nnormal");
+    // "café\n" has 5 chars (c, a, f, é, \n)
+    assert_eq!(buf.line_len_chars(0), 5);
+    assert_eq!(buf.line_len_chars(1), 6); // "normal" = 6 chars
+}
+
+#[test]
+fn line_len_chars_out_of_bounds() {
+    let buf = TextBuffer::from_str("hello");
+    assert_eq!(buf.line_len_chars(100), 0);
+}
+
+#[test]
+fn from_str_empty() {
+    let buf = TextBuffer::from_str("");
+    assert!(buf.is_empty());
+    assert_eq!(buf.len_chars(), 0);
+    assert_eq!(buf.len_bytes(), 0);
+    assert_eq!(buf.text(), "");
+}
+
+#[test]
+fn insert_empty_string() {
+    let mut buf = TextBuffer::from_str("hello");
+    buf.insert(0, "");
+    assert_eq!(buf.text(), "hello");
+    assert!(buf.is_modified()); // insert still records an operation
+}
+
+#[test]
+fn delete_zero_range() {
+    let mut buf = TextBuffer::from_str("hello");
+    buf.delete(0, 0);
+    assert_eq!(buf.text(), "hello");
+}
+
+#[test]
+fn line_zero_on_empty() {
+    let buf = TextBuffer::from_str("");
+    // Ropey always has at least 1 line
+    let line = buf.line(0);
+    assert!(line.is_some());
+    assert_eq!(line.unwrap(), "");
+}
+
+#[test]
+fn char_at_zero_on_empty() {
+    let buf = TextBuffer::from_str("");
+    assert_eq!(buf.char_at(0), None);
+}
+
+#[test]
+fn len_chars_on_empty() {
+    let buf = TextBuffer::from_str("");
+    assert_eq!(buf.len_chars(), 0);
+}
+
+#[test]
+fn from_str_multi_byte_unicode() {
+    let buf = TextBuffer::from_str("😀café");
+    // 😀 = 4 bytes, c=1, a=1, f=1, é=2 → 9 bytes
+    assert_eq!(buf.len_bytes(), 9);
+    // 😀 = 1 char, café = 4 chars → 5 chars
+    assert_eq!(buf.len_chars(), 5);
+}
+
+#[test]
+fn char_at_multi_byte() {
+    let buf = TextBuffer::from_str("😀café");
+    assert_eq!(buf.char_at(0), Some('😀'));
+    // after 😀 (4 bytes), 'c' at byte 4
+    assert_eq!(buf.char_at(4), Some('c'));
+}
+
+#[test]
+fn len_chars_emoji() {
+    let buf = TextBuffer::from_str("🎉🎊🎈");
+    assert_eq!(buf.len_chars(), 3);
+    assert_eq!(buf.len_bytes(), 12); // 3 * 4 bytes
+}
+
+#[test]
+fn from_str_crlf_line_endings() {
+    let buf = TextBuffer::from_str("line1\r\nline2");
+    assert_eq!(buf.text(), "line1\r\nline2");
+    assert_eq!(buf.line_count(), 2);
+}
+
+#[test]
+fn undo_with_unicode() {
+    let mut buf = TextBuffer::new();
+    buf.insert(0, "café");
+    assert_eq!(buf.text(), "café");
+    buf.undo();
+    assert_eq!(buf.text(), "");
+}
+
+#[test]
+fn undo_unicode_delete() {
+    let mut buf = TextBuffer::from_str("héllo");
+    // Delete é (bytes 1..3)
+    buf.delete(1, 3);
+    assert_eq!(buf.text(), "hllo");
+    buf.undo();
+    assert_eq!(buf.text(), "héllo");
+}
+
+#[test]
+fn redo_delete_operation() {
+    let mut buf = TextBuffer::from_str("hello world");
+    buf.delete(5, 11);
+    assert_eq!(buf.text(), "hello");
+    buf.undo();
+    assert_eq!(buf.text(), "hello world");
+    buf.redo();
+    assert_eq!(buf.text(), "hello");
+}
+
+#[test]
+fn redo_multiple_deletes() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.delete(0, 2); // "cdef"
+    buf.delete(0, 2); // "ef"
+    buf.undo();
+    buf.undo();
+    assert_eq!(buf.text(), "abcdef");
+    buf.redo();
+    assert_eq!(buf.text(), "cdef");
+    buf.redo();
+    assert_eq!(buf.text(), "ef");
+}
+
+#[test]
+fn byte_offset_with_unicode_content() {
+    let buf = TextBuffer::from_str("café\nworld");
+    // line 0: c(1) a(1) f(1) é(2) \n(1) = 6 bytes
+    // byte_offset(1, 0) should be 6
+    assert_eq!(buf.byte_offset(1, 0), Some(6));
+    // col 2 on line 0 → byte 2
+    assert_eq!(buf.byte_offset(0, 2), Some(2));
+}
+
+#[test]
+fn byte_offset_column_beyond_line_length() {
+    let buf = TextBuffer::from_str("hi\nworld");
+    // line 0 = "hi\n", col beyond line length should be clamped
+    let result = buf.byte_offset(0, 100);
+    assert!(result.is_some());
+    // Clamped to end of line including newline
+}
+
+#[test]
+fn line_col_at_boundary_len_bytes() {
+    let buf = TextBuffer::from_str("hello");
+    // byte_pos == len_bytes (5) should be valid (end of buffer)
+    let result = buf.line_col(5);
+    assert!(result.is_some());
+    assert_eq!(result, Some((0, 5)));
+}
+
+#[test]
+fn line_col_at_boundary_multiline() {
+    let buf = TextBuffer::from_str("ab\ncd");
+    // len_bytes = 5, should return (1, 2)
+    assert_eq!(buf.line_col(5), Some((1, 2)));
+}

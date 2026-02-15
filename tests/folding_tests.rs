@@ -172,3 +172,162 @@ fn test_multiple_folds() {
     let bar_hidden = fm.hidden_line_count(5);
     assert_eq!(fm.visible_line_count(total), total - 3 - bar_hidden);
 }
+
+// =====================================================
+// Additional coverage tests
+// =====================================================
+
+#[test]
+fn test_unfold_directly() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    fm.fold(0);
+    assert!(fm.is_folded(0));
+    assert!(fm.is_hidden(1));
+    fm.unfold(0);
+    assert!(!fm.is_folded(0));
+    assert!(!fm.is_hidden(1));
+}
+
+#[test]
+fn test_get_region_exists() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    let region = fm.get_region(0);
+    assert!(region.is_some());
+    assert_eq!(region.unwrap().start_line, 0);
+    assert_eq!(region.unwrap().end_line, 3);
+}
+
+#[test]
+fn test_get_region_none_for_non_fold_point() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    assert!(fm.get_region(1).is_none());
+    assert!(fm.get_region(4).is_none());
+    assert!(fm.get_region(99).is_none());
+}
+
+#[test]
+fn test_is_fold_point_true() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions("fn main() {\n    hello\n}");
+    assert!(fm.is_fold_point(0));
+}
+
+#[test]
+fn test_is_fold_point_false() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions("fn main() {\n    hello\n}");
+    assert!(!fm.is_fold_point(1));
+    assert!(!fm.is_fold_point(2));
+    assert!(!fm.is_fold_point(99));
+}
+
+#[test]
+fn test_detect_regions_unmatched_braces() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions("fn foo() {\n    line1\n    line2");
+    // Unmatched opening brace - no region created since no closing `}`
+    assert_eq!(fm.regions().len(), 0);
+}
+
+#[test]
+fn test_detect_regions_braces_in_comments_stripped() {
+    let mut fm = FoldManager::new();
+    // The `{` after `//` should be stripped, so only the first `{` counts
+    fm.detect_regions("fn foo() { // ignore {\n    body\n}");
+    assert_eq!(fm.regions().len(), 1);
+    assert_eq!(fm.regions()[0].start_line, 0);
+    assert_eq!(fm.regions()[0].end_line, 2);
+}
+
+#[test]
+fn test_detect_regions_braces_same_line() {
+    let mut fm = FoldManager::new();
+    // `{}` on same line should not produce a fold region (end > start required)
+    fm.detect_regions("fn foo() {}");
+    assert_eq!(fm.regions().len(), 0);
+}
+
+#[test]
+fn test_toggle_fold_on_non_fold_point() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    // Line 1 is not a fold point
+    fm.toggle_fold(1);
+    assert!(!fm.is_folded(1));
+}
+
+#[test]
+fn test_fold_already_folded_idempotent() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    fm.fold(0);
+    assert!(fm.is_folded(0));
+    fm.fold(0); // fold again - should still be folded
+    assert!(fm.is_folded(0));
+}
+
+#[test]
+fn test_fold_non_fold_point_noop() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    fm.fold(1); // not a fold point
+    assert!(!fm.is_folded(1));
+}
+
+#[test]
+fn test_fold_level_higher_level() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    // Level 100 should fold everything with indent_level <= 100
+    fm.fold_level(100);
+    for region in fm.regions() {
+        assert!(fm.is_folded(region.start_line));
+    }
+}
+
+#[test]
+fn test_fold_level_no_matching_regions() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions("no braces here");
+    fm.fold_level(0);
+    // No regions, nothing should be folded
+    assert!(!fm.is_folded(0));
+}
+
+#[test]
+fn test_visible_to_doc_line_beyond_total() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    let total = RUST_CODE.lines().count();
+    // visible_line far beyond total should return last doc line
+    let result = fm.visible_to_doc_line(1000, total);
+    assert!(result < total);
+}
+
+#[test]
+fn test_visible_to_doc_line_total_zero() {
+    let fm = FoldManager::new();
+    let result = fm.visible_to_doc_line(0, 0);
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn test_doc_to_visible_line_zero() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    assert_eq!(fm.doc_to_visible_line(0), 0);
+}
+
+#[test]
+fn test_doc_to_visible_line_beyond_total() {
+    let mut fm = FoldManager::new();
+    fm.detect_regions(RUST_CODE);
+    let total = RUST_CODE.lines().count();
+    // doc_line beyond total iterates 0..doc_line counting non-hidden
+    // With no folds, all lines are visible so result == doc_line
+    let result = fm.doc_to_visible_line(total + 100);
+    assert_eq!(result, total + 100);
+}
