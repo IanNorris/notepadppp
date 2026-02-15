@@ -101,7 +101,8 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
             container(text("Address").size(11).color(text_dim).font(Font::MONOSPACE)).width(160),
             container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(180),
             container(text("Mnemonic").size(11).color(text_dim).font(Font::MONOSPACE)).width(80),
-            text("Operands").size(11).color(text_dim).font(Font::MONOSPACE),
+            container(text("Operands").size(11).color(text_dim).font(Font::MONOSPACE)).width(Length::Fill),
+            container(text("Comment").size(11).color(text_dim).font(Font::MONOSPACE)).width(200),
         ]
         .align_y(iced::Alignment::Center),
     )
@@ -162,6 +163,7 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 };
 
                 let operands_str = line.operands.clone();
+                let comment_str = line.comment.clone().unwrap_or_default();
 
                 let insn_row = row![
                     container(text(addr_str)
@@ -176,10 +178,14 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                         .size(12)
                         .color(text_color)
                         .font(Font::MONOSPACE)).width(80),
-                    text(operands_str)
+                    container(text(operands_str)
                         .size(12)
                         .color(text_color)
-                        .font(Font::MONOSPACE),
+                        .font(Font::MONOSPACE)).width(Length::Fill),
+                    container(text(if comment_str.is_empty() { String::new() } else { format!("; {}", comment_str) })
+                        .size(12)
+                        .color(accent)
+                        .font(Font::MONOSPACE)).width(200),
                 ]
                 .align_y(iced::Alignment::Center);
 
@@ -230,7 +236,14 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         ..Default::default()
     });
 
-    let body = scrollable(rows).height(Length::Fill);
+    let body = scrollable(rows.width(Length::Fill))
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(10)
+                .scroller_width(8),
+        ));
     let panel = column![toolbar, col_header, body, nav_row];
 
     container(panel)

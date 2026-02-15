@@ -35,6 +35,7 @@ pub struct DisasmLine {
     pub bytes: Vec<u8>,
     pub mnemonic: String,
     pub operands: String,
+    pub comment: Option<String>,
     pub symbol: Option<String>,
     pub is_branch_target: bool,
 }
@@ -704,6 +705,14 @@ impl Disassembler {
         &self.symbols
     }
 
+    pub fn add_symbol(&mut self, name: String, address: u64, size: u64) {
+        self.symbols.push(Symbol {
+            name,
+            address,
+            size,
+        });
+    }
+
     fn make_capstone(&self) -> Result<Capstone, capstone::Error> {
         match self.arch {
             DisasmArch::X86_32 => Capstone::new()
@@ -758,6 +767,7 @@ impl Disassembler {
         branch_targets: &std::collections::HashSet<u64>,
     ) -> DisasmLine {
         let addr = insn.address();
+        let insn_size = insn.bytes().len() as u64;
         let symbol = self.symbol_at_address(addr).and_then(|s| {
             if s.address == addr {
                 Some(s.name.clone())
@@ -765,14 +775,138 @@ impl Disassembler {
                 None
             }
         });
+
+        let operands_raw = insn.op_str().unwrap_or("").to_string();
+        let mnemonic = insn.mnemonic().unwrap_or("").to_string();
+
+        // Resolve addresses in operands to symbolic names
+        let comment = self.resolve_operand_symbol(&mnemonic, &operands_raw, addr, insn_size);
+
         DisasmLine {
             address: addr,
             bytes: insn.bytes().to_vec(),
-            mnemonic: insn.mnemonic().unwrap_or("").to_string(),
-            operands: insn.op_str().unwrap_or("").to_string(),
+            mnemonic,
+            operands: operands_raw,
+            comment,
             symbol,
             is_branch_target: branch_targets.contains(&addr),
         }
+    }
+
+    /// Try to resolve addresses in operands to symbolic names.
+    fn resolve_operand_symbol(
+        &self,
+        mnemonic: &str,
+        operands: &str,
+        insn_addr: u64,
+        insn_size: u64,
+    ) -> Option<String> {
+        // 1. Direct branch/call target: "call 0x140001234" or "jmp 0x140001234"
+        if mnemonic.starts_with('j') || mnemonic == "call" || mnemonic.starts_with('b') {
+            if let Some(target) = parse_hex_address(operands) {
+                return self.format_symbol_ref(target);
+            }
+        }
+
+        // 2. RIP-relative addressing: [rip + 0x1234] or [rip - 0x1234]
+        if let Some(target) = self.resolve_rip_relative(operands, insn_addr, insn_size) {
+            return self.format_symbol_ref(target);
+        }
+
+        // 3. Absolute address in operands: mov rax, 0x140001234 or mov rax, qword ptr [0x140008000]
+        // Look for bare hex addresses that could be symbol references
+        if let Some(target) = self.find_absolute_address(operands) {
+            return self.format_symbol_ref(target);
+        }
+
+        None
+    }
+
+    /// Parse RIP-relative addressing and compute the target address.
+    fn resolve_rip_relative(&self, operands: &str, insn_addr: u64, insn_size: u64) -> Option<u64> {
+        let lower = operands.to_lowercase();
+        let rip_pos = lower.find("rip")?;
+
+        // Find the bracket context around rip
+        let bracket_start = lower[..rip_pos].rfind('[')?;
+        let bracket_end = lower[rip_pos..].find(']').map(|i| rip_pos + i)?;
+        let inner = &lower[bracket_start + 1..bracket_end].trim();
+
+        // Parse "rip + 0x1234" or "rip - 0x1234"
+        let after_rip = inner[3..].trim(); // skip "rip"
+        if after_rip.is_empty() {
+            // [rip] with no displacement
+            return Some(insn_addr + insn_size);
+        }
+
+        let (sign, hex_part) = if let Some(rest) = after_rip.strip_prefix('+') {
+            (1i64, rest.trim())
+        } else if let Some(rest) = after_rip.strip_prefix('-') {
+            (-1i64, rest.trim())
+        } else {
+            return None;
+        };
+
+        let disp = if let Some(h) = hex_part.strip_prefix("0x") {
+            i64::from_str_radix(h, 16).ok()?
+        } else {
+            hex_part.parse::<i64>().ok()?
+        };
+
+        let target = (insn_addr + insn_size) as i64 + sign * disp;
+        Some(target as u64)
+    }
+
+    /// Find a bare hex address in operands that might be a symbol reference.
+    fn find_absolute_address(&self, operands: &str) -> Option<u64> {
+        // Match 0x followed by 8+ hex digits (likely an absolute address)
+        for part in operands.split(|c: char| !c.is_ascii_hexdigit() && c != 'x' && c != 'X') {
+            let part = part.trim();
+            if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
+                if hex.len() >= 8 {
+                    if let Ok(addr) = u64::from_str_radix(hex, 16) {
+                        if self.symbol_at_address(addr).is_some()
+                            || self.nearest_symbol_before(addr).is_some()
+                        {
+                            return Some(addr);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Format an address as a symbol reference like "function1+0x3c" or just "function1".
+    fn format_symbol_ref(&self, target: u64) -> Option<String> {
+        // Exact match
+        if let Some(sym) = self.symbol_at_address(target) {
+            if sym.address == target {
+                return Some(sym.name.clone());
+            }
+            // Within symbol bounds
+            let offset = target - sym.address;
+            return Some(format!("{}+0x{:x}", sym.name, offset));
+        }
+
+        // Find nearest symbol before this address
+        if let Some(sym) = self.nearest_symbol_before(target) {
+            let offset = target - sym.address;
+            // Only annotate if within reasonable distance (64KB)
+            if offset < 0x10000 {
+                return Some(format!("{}+0x{:x}", sym.name, offset));
+            }
+        }
+
+        None
+    }
+
+    /// Find the nearest symbol at or before the given address.
+    fn nearest_symbol_before(&self, addr: u64) -> Option<&Symbol> {
+        self.symbols
+            .iter()
+            .filter(|s| s.address <= addr)
+            .max_by_key(|s| s.address)
     }
 }
 

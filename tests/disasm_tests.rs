@@ -310,3 +310,117 @@ fn test_find_symbol_prefers_exact_match() {
         }
     }
 }
+
+#[test]
+fn test_call_target_resolved_to_symbol() {
+    // call rel32 to address 0x1050 where we have a symbol "my_func"
+    // E8 xx xx xx xx encodes call with 32-bit relative offset
+    // At base 0x1000, offset 0: call to 0x1050 means rel32 = 0x1050 - (0x1000 + 5) = 0x4B
+    let mut bytes = vec![0x90; 0x60]; // pad with nops
+    bytes[0] = 0xE8; // call rel32
+    let rel: i32 = 0x1050_i64 as i32 - (0x1000 + 5);
+    bytes[1..5].copy_from_slice(&rel.to_le_bytes());
+    // Put a ret at 0x50 so the "function" is there
+    bytes[0x50] = 0xC3;
+
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    disasm.add_symbol("my_func".to_string(), 0x1050, 16);
+
+    let lines = disasm.disassemble_range(0, 5);
+    assert_eq!(lines[0].mnemonic, "call");
+    assert!(lines[0].comment.is_some(), "call should have a comment with symbol name");
+    assert_eq!(lines[0].comment.as_deref(), Some("my_func"));
+}
+
+#[test]
+fn test_call_target_with_offset() {
+    // call to an address inside a function (not at its start)
+    let mut bytes = vec![0x90; 0x60];
+    bytes[0] = 0xE8; // call rel32
+    let target = 0x1054_u64;
+    let rel: i32 = target as i32 - (0x1000 + 5);
+    bytes[1..5].copy_from_slice(&rel.to_le_bytes());
+
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    disasm.add_symbol("my_func".to_string(), 0x1050, 16);
+
+    let lines = disasm.disassemble_range(0, 5);
+    assert_eq!(lines[0].mnemonic, "call");
+    assert!(lines[0].comment.is_some());
+    assert_eq!(lines[0].comment.as_deref(), Some("my_func+0x4"));
+}
+
+#[test]
+fn test_rip_relative_lea_resolved() {
+    // LEA rax, [rip + disp32] - target should be resolved if symbol exists
+    // 48 8D 05 xx xx xx xx = lea rax, [rip + disp32]
+    // At address 0x1000, instruction size = 7 bytes
+    // target = 0x1000 + 7 + disp32
+    let mut bytes = vec![0x90; 0x60];
+    // We want target = 0x1050, so disp32 = 0x1050 - 0x1007 = 0x49
+    let disp: i32 = 0x1050_i64 as i32 - 0x1007;
+    bytes[0] = 0x48;
+    bytes[1] = 0x8D;
+    bytes[2] = 0x05;
+    bytes[3..7].copy_from_slice(&disp.to_le_bytes());
+
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    disasm.add_symbol("my_data".to_string(), 0x1050, 8);
+
+    let lines = disasm.disassemble_range(0, 3);
+    assert_eq!(lines[0].mnemonic, "lea");
+    assert!(lines[0].comment.is_some(), "RIP-relative lea should resolve to symbol: {:?}", lines[0]);
+    assert_eq!(lines[0].comment.as_deref(), Some("my_data"));
+}
+
+#[test]
+fn test_comment_field_none_when_no_symbol() {
+    // Simple nop instructions should have no comment
+    let bytes = vec![0x90, 0x90, 0x90];
+    let disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    let lines = disasm.disassemble_range(0, 3);
+    for line in &lines {
+        assert!(line.comment.is_none(), "nop should have no comment");
+    }
+}
+
+#[test]
+fn test_pe_symbolic_resolution() {
+    // Compile a PE with known function calls and verify resolution
+    let dir = tempfile::tempdir().unwrap();
+    let c_path = dir.path().join("test.c");
+    let exe_path = dir.path().join("test.exe");
+
+    std::fs::write(&c_path, r#"
+        int helper(int x) { return x * 2; }
+        int caller(int x) { return helper(x) + 1; }
+        int main() { return caller(21); }
+    "#).unwrap();
+
+    let output = std::process::Command::new("x86_64-w64-mingw32-gcc")
+        .args(["-g", "-O0", "-o"])
+        .arg(&exe_path)
+        .arg(&c_path)
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let disasm = Disassembler::from_file(&exe_path).expect("Failed to load PE");
+            // Disassemble at 'caller' which calls 'helper'
+            let caller_sym = disasm.find_symbol("caller").expect("Should find caller");
+            let lines = disasm.disassemble_at_address(caller_sym.address, 20);
+
+            // Find any call instruction and check if it has a comment
+            let call_lines: Vec<_> = lines.iter().filter(|l| l.mnemonic == "call").collect();
+            assert!(!call_lines.is_empty(), "caller should contain a call instruction");
+            // At least one call should resolve to a symbol
+            let resolved: Vec<_> = call_lines.iter().filter(|l| l.comment.is_some()).collect();
+            assert!(!resolved.is_empty(),
+                "At least one call in caller should resolve to a symbol name, got: {:?}",
+                call_lines.iter().map(|l| (&l.operands, &l.comment)).collect::<Vec<_>>());
+        }
+        _ => {
+            eprintln!("Skipping PE symbolic test: mingw not available");
+        }
+    }
+}
