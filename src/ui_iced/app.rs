@@ -2426,8 +2426,22 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         layers.push(goto_overlay);
     }
 
-    // About — floating non-modal, centered
+    // About — floating modal with backdrop, centered
     if state.show_about {
+        // Semi-transparent backdrop
+        let backdrop: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CloseAbout)
+        .into();
+        layers.push(backdrop);
+
         let about_overlay: Element<'_, Message> = container(
             opaque(super::about_dialog::view_about_dialog(&state.theme)),
         )
