@@ -48,6 +48,20 @@ pub fn convert_line_endings(text: &str, target: LineEnding) -> String {
     }
 }
 
+/// Returns true if the byte slice likely contains binary (non-text) content.
+/// Checks the first 8192 bytes for null bytes or a high ratio of non-printable characters.
+pub fn is_binary_content(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(8192)];
+    if sample.contains(&0u8) {
+        return true;
+    }
+    let non_text = sample
+        .iter()
+        .filter(|&&b| b < 0x08 || (b > 0x0D && b < 0x20 && b != 0x1B))
+        .count();
+    non_text as f64 / sample.len().max(1) as f64 > 0.10
+}
+
 /// Read a file, detect its encoding and line ending.
 /// Returns `(content, encoding, line_ending)`.
 pub fn read_file(path: &Path) -> io::Result<(String, Encoding, LineEnding)> {
@@ -67,9 +81,14 @@ pub fn read_file(path: &Path) -> io::Result<(String, Encoding, LineEnding)> {
             ));
         }
         _ => {
-            let s = String::from_utf8(bytes)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            (s, false)
+            match String::from_utf8(bytes) {
+                Ok(s) => (s, false),
+                Err(e) => {
+                    // Binary file — use lossy conversion
+                    let s = String::from_utf8_lossy(e.as_bytes()).into_owned();
+                    (s, false)
+                }
+            }
         }
     };
     let _ = skip;

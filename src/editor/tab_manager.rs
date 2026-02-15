@@ -67,12 +67,19 @@ impl TabManager {
             doc = doc.with_large_file_info(large_info);
             doc
         } else {
+            let raw_bytes = std::fs::read(&path)?;
+            let is_binary = file_io::is_binary_content(&raw_bytes);
             let (content, encoding, line_ending) = file_io::read_file(&path)?;
-            Document::from_str(&content)
+            let mut doc = Document::from_str(&content)
                 .with_path(path)
                 .with_encoding(encoding)
                 .with_line_ending(line_ending)
-                .with_large_file_info(large_info)
+                .with_large_file_info(large_info);
+            doc.is_binary = is_binary;
+            if is_binary {
+                doc.read_only = true;
+            }
+            doc
         };
 
         // Auto-set read-only if file is not writable on disk

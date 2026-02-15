@@ -648,9 +648,19 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
                 if cli.read_only {
                     doc.read_only = true;
                 }
+                let is_binary = doc.is_binary;
                 let buf_text = doc.buffer.text();
                 state.fold_manager.detect_regions(&buf_text);
                 state.tab_contents.push(TabContent::with_text(&buf_text));
+                // Auto-show disassembler for binary files
+                if is_binary {
+                    if let Some(ref p) = state.tab_manager.active_document().path {
+                        if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
+                            state.disasm_state = Some(disasm);
+                            state.show_disasm = true;
+                        }
+                    }
+                }
                 opened_any = true;
             }
             Err(e) => {
