@@ -38,6 +38,150 @@ pub struct DisasmLine {
     pub comment: Option<String>,
     pub symbol: Option<String>,
     pub is_branch_target: bool,
+    /// Target address if this instruction is a branch/jump (not call)
+    pub branch_target: Option<u64>,
+}
+
+/// A branch arrow connecting a source instruction to a target within the visible range.
+#[derive(Debug, Clone)]
+pub struct BranchArrow {
+    /// Index of the source instruction in the visible lines
+    pub from_line: usize,
+    /// Index of the target instruction in the visible lines
+    pub to_line: usize,
+    /// Lane assignment (0 = closest to instructions, higher = further left)
+    pub lane: usize,
+    /// Whether the jump goes upward (true) or downward (false)
+    pub goes_up: bool,
+}
+
+/// Compute branch arrows for a set of disassembled lines.
+/// Only includes arrows where both source and target are visible.
+pub fn compute_branch_arrows(lines: &[DisasmLine]) -> Vec<BranchArrow> {
+    // Build address → line index map
+    let addr_to_idx: std::collections::HashMap<u64, usize> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (l.address, i))
+        .collect();
+
+    // Collect arrows where both endpoints are visible
+    let mut arrows: Vec<(usize, usize)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let mn = line.mnemonic.as_str();
+        // Only draw arrows for jumps, not calls (calls go to different functions)
+        if mn.starts_with('j') || (mn.starts_with('b') && mn != "bswap") {
+            if let Some(target) = line.branch_target {
+                if let Some(&target_idx) = addr_to_idx.get(&target) {
+                    if target_idx != i {
+                        arrows.push((i, target_idx));
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by span length (shorter arrows get inner lanes, closer to code)
+    arrows.sort_by_key(|&(from, to)| {
+        let min = from.min(to);
+        let max = from.max(to);
+        max - min
+    });
+
+    // Assign lanes - track which rows each lane occupies
+    let mut lane_occupancy: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut result = Vec::new();
+
+    for (from, to) in arrows {
+        let min_row = from.min(to);
+        let max_row = from.max(to);
+        let goes_up = to < from;
+
+        // Find first lane that doesn't overlap
+        let mut lane = 0;
+        'lane_search: loop {
+            if lane >= lane_occupancy.len() {
+                lane_occupancy.push(Vec::new());
+            }
+            for &(occ_min, occ_max) in &lane_occupancy[lane] {
+                // Check overlap (ranges intersect if they share any row)
+                if min_row <= occ_max && max_row >= occ_min {
+                    lane += 1;
+                    continue 'lane_search;
+                }
+            }
+            break;
+        }
+
+        if lane >= lane_occupancy.len() {
+            lane_occupancy.push(Vec::new());
+        }
+        lane_occupancy[lane].push((min_row, max_row));
+
+        result.push(BranchArrow {
+            from_line: from,
+            to_line: to,
+            lane,
+            goes_up,
+        });
+    }
+
+    result
+}
+
+/// Render the arrow column for a specific line index.
+/// Returns a string of fixed width (num_lanes * 2 chars wide) using box-drawing characters.
+pub fn render_arrow_column(line_idx: usize, arrows: &[BranchArrow], num_lanes: usize) -> String {
+    if num_lanes == 0 {
+        return String::new();
+    }
+
+    // For each lane, determine what character to draw at this row
+    // Lanes are drawn right-to-left: lane 0 is rightmost (closest to code)
+    let mut chars: Vec<char> = vec![' '; num_lanes];
+
+    for arrow in arrows {
+        let min_row = arrow.from_line.min(arrow.to_line);
+        let max_row = arrow.from_line.max(arrow.to_line);
+        let lane = arrow.lane;
+
+        if lane >= num_lanes {
+            continue;
+        }
+
+        // The lane index in our chars array (rightmost = lane 0)
+        let col = num_lanes - 1 - lane;
+
+        if line_idx == arrow.from_line {
+            // Source of the branch — corner going toward target
+            if arrow.goes_up {
+                chars[col] = '└'; // bottom-left corner, going up
+            } else {
+                chars[col] = '┌'; // top-left corner, going down
+            }
+        } else if line_idx == arrow.to_line {
+            // Target of the branch — arrow pointing right
+            if arrow.goes_up {
+                chars[col] = '┌'; // top-left corner with arrow
+            } else {
+                chars[col] = '└'; // bottom-left corner with arrow
+            }
+        } else if line_idx > min_row && line_idx < max_row {
+            // In between — vertical line
+            chars[col] = '│';
+        }
+    }
+
+    // Add arrow head indicator: find if this line is a target
+    let is_target = arrows.iter().any(|a| a.to_line == line_idx);
+
+    let mut result: String = chars.iter().collect();
+    if is_target {
+        result.push('→');
+    } else {
+        result.push(' ');
+    }
+    result
 }
 
 pub struct Disassembler {
@@ -788,6 +932,16 @@ impl Disassembler {
         let operands_raw = insn.op_str().unwrap_or("").to_string();
         let mnemonic = insn.mnemonic().unwrap_or("").to_string();
 
+        // Parse branch target address for arrow rendering
+        let branch_target = if mnemonic.starts_with('j')
+            || mnemonic == "call"
+            || (mnemonic.starts_with('b') && mnemonic != "bswap")
+        {
+            parse_hex_address(&operands_raw)
+        } else {
+            None
+        };
+
         // Resolve addresses in operands to symbolic names.
         // The resolved form replaces the address with the symbol name in the operands field,
         // and the raw operand goes to the comment.
@@ -802,6 +956,7 @@ impl Disassembler {
             comment,
             symbol,
             is_branch_target: branch_targets.contains(&addr),
+            branch_target,
         }
     }
 

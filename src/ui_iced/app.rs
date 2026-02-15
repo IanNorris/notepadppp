@@ -194,6 +194,7 @@ pub enum Message {
     DisasmToggleBytes,
     DisasmToggleResolved,
     DisasmToggleRawComment,
+    DisasmToggleArrows,
     DisasmContextMenu,
     DisasmCloseContextMenu,
     DisasmToggleSymBrowser,
@@ -521,6 +522,7 @@ pub struct NotepadIced {
     pub disasm_show_bytes: bool,
     pub disasm_show_resolved: bool,
     pub disasm_show_raw_comment: bool,
+    pub disasm_show_arrows: bool,
     pub disasm_context_menu: bool,
     pub disasm_sym_browser: bool,
     pub disasm_sym_filter: String,
@@ -638,6 +640,7 @@ impl Default for NotepadIced {
             disasm_show_bytes: true,
             disasm_show_resolved: true,
             disasm_show_raw_comment: true,
+            disasm_show_arrows: true,
             disasm_context_menu: false,
             disasm_sym_browser: false,
             disasm_sym_filter: String::new(),
@@ -1906,6 +1909,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::DisasmToggleRawComment => {
             state.disasm_show_raw_comment = !state.disasm_show_raw_comment;
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmToggleArrows => {
+            state.disasm_show_arrows = !state.disasm_show_arrows;
             state.disasm_context_menu = false;
             Task::none()
         }

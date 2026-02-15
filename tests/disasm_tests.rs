@@ -1,4 +1,6 @@
-use notepadppp::tools::disasm::{DisasmArch, Disassembler};
+use notepadppp::tools::disasm::{
+    compute_branch_arrows, render_arrow_column, DisasmArch, DisasmLine, Disassembler,
+};
 
 #[test]
 fn test_from_bytes_x86_64() {
@@ -452,4 +454,171 @@ fn test_write_bytes_out_of_bounds() {
     disasm.write_bytes(1, &[0xC3, 0xCC, 0xCC]);
     // Only offset 1 should be written
     assert_eq!(disasm.bytes()[1], 0xC3);
+}
+
+// --- Branch Arrow Tests ---
+
+fn make_line(addr: u64, mnemonic: &str, branch_target: Option<u64>) -> DisasmLine {
+    DisasmLine {
+        address: addr,
+        bytes: vec![0x90],
+        mnemonic: mnemonic.to_string(),
+        operands: branch_target
+            .map(|t| format!("0x{:x}", t))
+            .unwrap_or_default(),
+        comment: None,
+        symbol: None,
+        is_branch_target: false,
+        branch_target,
+    }
+}
+
+#[test]
+fn test_branch_arrows_forward_jump() {
+    // jmp from line 0 to line 3
+    let lines = vec![
+        make_line(0x1000, "jmp", Some(0x1003)),
+        make_line(0x1001, "nop", None),
+        make_line(0x1002, "nop", None),
+        make_line(0x1003, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 1);
+    assert_eq!(arrows[0].from_line, 0);
+    assert_eq!(arrows[0].to_line, 3);
+    assert!(!arrows[0].goes_up);
+    assert_eq!(arrows[0].lane, 0);
+}
+
+#[test]
+fn test_branch_arrows_backward_jump() {
+    // je from line 3 back to line 0
+    let lines = vec![
+        make_line(0x1000, "nop", None),
+        make_line(0x1001, "nop", None),
+        make_line(0x1002, "nop", None),
+        make_line(0x1003, "je", Some(0x1000)),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 1);
+    assert_eq!(arrows[0].from_line, 3);
+    assert_eq!(arrows[0].to_line, 0);
+    assert!(arrows[0].goes_up);
+}
+
+#[test]
+fn test_branch_arrows_no_call_arrows() {
+    // Calls should NOT generate arrows (they go to different functions)
+    let lines = vec![
+        make_line(0x1000, "call", Some(0x2000)),
+        make_line(0x1005, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 0);
+}
+
+#[test]
+fn test_branch_arrows_target_out_of_view() {
+    // Jump target not in visible lines — no arrow
+    let lines = vec![
+        make_line(0x1000, "jmp", Some(0x5000)),
+        make_line(0x1001, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 0);
+}
+
+#[test]
+fn test_branch_arrows_multiple_non_overlapping() {
+    // Two non-overlapping jumps should share lane 0
+    let lines = vec![
+        make_line(0x1000, "je", Some(0x1002)),
+        make_line(0x1001, "nop", None),
+        make_line(0x1002, "nop", None),
+        make_line(0x1003, "je", Some(0x1005)),
+        make_line(0x1004, "nop", None),
+        make_line(0x1005, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 2);
+    // Both should fit in lane 0 since they don't overlap
+    assert_eq!(arrows[0].lane, 0);
+    assert_eq!(arrows[1].lane, 0);
+}
+
+#[test]
+fn test_branch_arrows_overlapping_use_different_lanes() {
+    // Two overlapping jumps need different lanes
+    let lines = vec![
+        make_line(0x1000, "je", Some(0x1004)),  // spans 0..4
+        make_line(0x1001, "je", Some(0x1003)),  // spans 1..3 (nested inside)
+        make_line(0x1002, "nop", None),
+        make_line(0x1003, "nop", None),
+        make_line(0x1004, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 2);
+    // They should be in different lanes
+    let lanes: std::collections::HashSet<usize> = arrows.iter().map(|a| a.lane).collect();
+    assert_eq!(lanes.len(), 2);
+}
+
+#[test]
+fn test_render_arrow_column_empty() {
+    let result = render_arrow_column(0, &[], 0);
+    assert_eq!(result, "");
+}
+
+#[test]
+fn test_render_arrow_column_source() {
+    // Simple forward jump from line 0 to line 2
+    let lines = vec![
+        make_line(0x1000, "jmp", Some(0x1002)),
+        make_line(0x1001, "nop", None),
+        make_line(0x1002, "nop", None),
+    ];
+    let arrows = compute_branch_arrows(&lines);
+    let num_lanes = arrows.iter().map(|a| a.lane + 1).max().unwrap_or(0);
+
+    // Line 0 is source (forward jump = top-left corner ┌)
+    let col0 = render_arrow_column(0, &arrows, num_lanes);
+    assert!(col0.contains('┌'), "Source of forward jump should have ┌: {:?}", col0);
+
+    // Line 1 is middle (vertical line │)
+    let col1 = render_arrow_column(1, &arrows, num_lanes);
+    assert!(col1.contains('│'), "Middle of arrow should have │: {:?}", col1);
+
+    // Line 2 is target (arrow → and └)
+    let col2 = render_arrow_column(2, &arrows, num_lanes);
+    assert!(col2.contains('└'), "Target of forward jump should have └: {:?}", col2);
+    assert!(col2.contains('→'), "Target should have arrow head →: {:?}", col2);
+}
+
+#[test]
+fn test_branch_arrows_with_real_x86() {
+    // Build a small code sequence with a real conditional jump
+    // je +2 (0x74 0x02) = jump forward 2 bytes from end of this insn
+    // nop nop (2 bytes to skip)
+    // nop (target)
+    let bytes = vec![
+        0x74, 0x02, // je +2 (target = offset 4)
+        0x90,       // nop (skipped)
+        0x90,       // nop (skipped)
+        0x90,       // nop (target of je)
+    ];
+    let disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    let lines = disasm.disassemble_range(0, 10);
+
+    // Verify the je has branch_target set
+    assert_eq!(lines[0].mnemonic, "je");
+    assert!(lines[0].branch_target.is_some(), "je should have branch_target");
+    let target = lines[0].branch_target.unwrap();
+    assert_eq!(target, 0x1004);
+
+    // Compute arrows
+    let arrows = compute_branch_arrows(&lines);
+    assert_eq!(arrows.len(), 1);
+    assert_eq!(arrows[0].from_line, 0);
+    // Target should be the last nop (at 0x1004 = line index 3)
+    assert_eq!(lines[arrows[0].to_line].address, 0x1004);
 }

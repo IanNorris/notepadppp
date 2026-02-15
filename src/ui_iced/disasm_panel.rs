@@ -5,7 +5,7 @@ use iced::{Element, Font, Length, Theme};
 
 use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
-use crate::tools::disasm::DisasmArch;
+use crate::tools::disasm::{compute_branch_arrows, render_arrow_column, DisasmArch};
 
 const VISIBLE_LINES: usize = 60;
 
@@ -162,7 +162,21 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 .padding([10, 10]),
             );
         } else {
-            for line in &lines {
+            // Compute branch arrows for the visible lines
+            let arrows = if state.disasm_show_arrows {
+                compute_branch_arrows(&lines)
+            } else {
+                Vec::new()
+            };
+            let num_lanes = arrows.iter().map(|a| a.lane + 1).max().unwrap_or(0);
+            let num_lanes = num_lanes.min(8);
+            let arrow_col_width = if state.disasm_show_arrows && num_lanes > 0 {
+                (num_lanes + 1) * 8 + 4
+            } else {
+                0
+            };
+
+            for (line_idx, line) in lines.iter().enumerate() {
                 // Symbol label
                 if let Some(ref sym) = line.symbol {
                     rows = rows.push(
@@ -207,6 +221,25 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                                 .font(Font::MONOSPACE),
                         )
                         .width(180),
+                    );
+                }
+
+                // Arrow column
+                if state.disasm_show_arrows && num_lanes > 0 {
+                    let arrow_str = render_arrow_column(line_idx, &arrows, num_lanes);
+                    let arrow_color = if arrow_str.trim().is_empty() {
+                        text_dim
+                    } else {
+                        accent
+                    };
+                    insn_row = insn_row.push(
+                        container(
+                            text(arrow_str)
+                                .size(12)
+                                .color(arrow_color)
+                                .font(Font::MONOSPACE),
+                        )
+                        .width(arrow_col_width as u16),
                     );
                 }
 
@@ -373,6 +406,17 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                     .font(Font::MONOSPACE),
                 )
                 .on_press(Message::DisasmToggleRawComment)
+                .width(Length::Fill)
+                .padding([4, 12]),
+                button(
+                    text(format!(
+                        "{}Branch Arrows",
+                        check(state.disasm_show_arrows)
+                    ))
+                    .size(12)
+                    .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleArrows)
                 .width(Length::Fill)
                 .padding([4, 12]),
                 container(Space::with_height(1))
