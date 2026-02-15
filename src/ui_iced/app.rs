@@ -448,8 +448,7 @@ pub fn title(state: &NotepadIced) -> String {
     let tab_title = state
         .tab_manager
         .get_tab_title(state.tab_manager.active_index());
-    let modified = if doc.is_modified() { " •" } else { "" };
-    format!("{}{} — Notepad+++", tab_title, modified)
+    crate::editor::text_transforms::format_title(&tab_title, doc.is_modified())
 }
 
 pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
@@ -791,22 +790,8 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             apply_line_op(state, |lines, cursor_line| {
                 let language = "Rust"; // default
                 let prefix = crate::editor::comments::line_comment_prefix(language).unwrap_or("//");
-                let prefix_space = format!("{} ", prefix);
                 if cursor_line < lines.len() {
-                    let line = &lines[cursor_line];
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with(&prefix_space) {
-                        let indent = line.len() - trimmed.len();
-                        let rest = &trimmed[prefix_space.len()..];
-                        lines[cursor_line] = format!("{}{}", &line[..indent], rest);
-                    } else if trimmed.starts_with(prefix) {
-                        let indent = line.len() - trimmed.len();
-                        let rest = &trimmed[prefix.len()..];
-                        lines[cursor_line] = format!("{}{}", &line[..indent], rest);
-                    } else {
-                        let indent = line.len() - trimmed.len();
-                        lines[cursor_line] = format!("{}{} {}", &line[..indent], prefix, trimmed);
-                    }
+                    lines[cursor_line] = crate::editor::text_transforms::toggle_line_comment(&lines[cursor_line], prefix);
                 }
             });
             Task::none()
@@ -815,149 +800,90 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         // Line operations
         Message::DuplicateLine => {
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line < lines.len() {
-                    let dup = lines[cursor_line].clone();
-                    lines.insert(cursor_line + 1, dup);
-                }
+                crate::editor::line_ops::duplicate_line(lines, cursor_line);
             });
             Task::none()
         }
         Message::DeleteLine => {
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line < lines.len() && lines.len() > 1 {
-                    lines.remove(cursor_line);
-                } else if lines.len() == 1 {
-                    lines[0] = String::new();
-                }
+                crate::editor::line_ops::delete_line(lines, cursor_line);
             });
             Task::none()
         }
         Message::MoveLineUp => {
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line > 0 && cursor_line < lines.len() {
-                    lines.swap(cursor_line, cursor_line - 1);
-                }
+                crate::editor::line_ops::move_line_up(lines, cursor_line);
             });
             Task::none()
         }
         Message::MoveLineDown => {
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line + 1 < lines.len() {
-                    lines.swap(cursor_line, cursor_line + 1);
-                }
+                crate::editor::line_ops::move_line_down(lines, cursor_line);
             });
             Task::none()
         }
         Message::SortAsc => {
-            apply_line_op(state, |lines, _| lines.sort());
+            apply_line_op(state, |lines, _| crate::editor::line_ops::sort_asc(lines));
             Task::none()
         }
         Message::SortDesc => {
-            apply_line_op(state, |lines, _| {
-                lines.sort();
-                lines.reverse();
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::sort_desc(lines));
             Task::none()
         }
         Message::RemoveEmpty => {
-            apply_line_op(state, |lines, _| {
-                lines.retain(|l| !l.trim().is_empty());
-                if lines.is_empty() {
-                    lines.push(String::new());
-                }
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::remove_empty(lines));
             Task::none()
         }
         Message::RemoveDuplicates => {
-            apply_line_op(state, |lines, _| {
-                let mut seen = std::collections::HashSet::new();
-                lines.retain(|l| seen.insert(l.clone()));
-                if lines.is_empty() {
-                    lines.push(String::new());
-                }
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::remove_duplicates(lines));
             Task::none()
         }
         Message::TrimTrailing => {
-            apply_line_op(state, |lines, _| {
-                for line in lines.iter_mut() {
-                    *line = line.trim_end().to_string();
-                }
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::trim_trailing(lines));
             Task::none()
         }
         Message::JoinLines => {
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line < lines.len().saturating_sub(1) {
-                    let next = lines.remove(cursor_line + 1);
-                    lines[cursor_line].push_str(&next);
-                }
+                crate::editor::line_ops::join_lines(lines, cursor_line);
             });
             Task::none()
         }
         Message::SplitLine => {
-            // Split at cursor column (simplified: split in the middle)
             apply_line_op(state, |lines, cursor_line| {
-                if cursor_line < lines.len() {
-                    let current = lines[cursor_line].clone();
-                    let mid = current.len() / 2;
-                    lines[cursor_line] = current[..mid].to_string();
-                    lines.insert(cursor_line + 1, current[mid..].to_string());
-                }
+                crate::editor::line_ops::split_line(lines, cursor_line);
             });
             Task::none()
         }
         Message::InsertAbove => {
             apply_line_op(state, |lines, cursor_line| {
-                lines.insert(cursor_line, String::new());
+                crate::editor::line_ops::insert_above(lines, cursor_line);
             });
             Task::none()
         }
         Message::InsertBelow => {
             apply_line_op(state, |lines, cursor_line| {
-                lines.insert(cursor_line + 1, String::new());
+                crate::editor::line_ops::insert_below(lines, cursor_line);
             });
             Task::none()
         }
         Message::ReverseLines => {
-            apply_line_op(state, |lines, _| lines.reverse());
+            apply_line_op(state, |lines, _| crate::editor::line_ops::reverse_lines(lines));
             Task::none()
         }
         Message::SortCaseInsensitive => {
-            apply_line_op(state, |lines, _| {
-                lines.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::sort_case_insensitive(lines));
             Task::none()
         }
         Message::SortNumeric => {
-            apply_line_op(state, |lines, _| {
-                lines.sort_by(|a, b| {
-                    let na = a.trim().parse::<f64>().ok();
-                    let nb = b.trim().parse::<f64>().ok();
-                    match (na, nb) {
-                        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.cmp(b),
-                    }
-                });
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::sort_numeric(lines));
             Task::none()
         }
         Message::TrimLeading => {
-            apply_line_op(state, |lines, _| {
-                for line in lines.iter_mut() {
-                    *line = line.trim_start().to_string();
-                }
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::trim_leading(lines));
             Task::none()
         }
         Message::TrimBoth => {
-            apply_line_op(state, |lines, _| {
-                for line in lines.iter_mut() {
-                    *line = line.trim().to_string();
-                }
-            });
+            apply_line_op(state, |lines, _| crate::editor::line_ops::trim_both(lines));
             Task::none()
         }
 
@@ -971,55 +897,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::TitleCase => {
-            apply_text_transform(state, |s| {
-                let mut result = String::with_capacity(s.len());
-                let mut cap_next = true;
-                for c in s.chars() {
-                    if c.is_whitespace() || c == '-' || c == '_' {
-                        cap_next = true;
-                        result.push(c);
-                    } else if cap_next {
-                        result.extend(c.to_uppercase());
-                        cap_next = false;
-                    } else {
-                        result.extend(c.to_lowercase());
-                    }
-                }
-                result
-            });
+            apply_text_transform(state, crate::editor::text_transforms::title_case);
             Task::none()
         }
         Message::SentenceCase => {
-            apply_text_transform(state, |s| {
-                let mut result = String::with_capacity(s.len());
-                let mut cap_next = true;
-                for c in s.chars() {
-                    if c == '.' || c == '!' || c == '?' {
-                        cap_next = true;
-                        result.push(c);
-                    } else if cap_next && c.is_alphabetic() {
-                        result.extend(c.to_uppercase());
-                        cap_next = false;
-                    } else {
-                        result.extend(c.to_lowercase());
-                    }
-                }
-                result
-            });
+            apply_text_transform(state, crate::editor::text_transforms::sentence_case);
             Task::none()
         }
         Message::InverseCase => {
-            apply_text_transform(state, |s| {
-                s.chars()
-                    .map(|c| {
-                        if c.is_uppercase() {
-                            c.to_lowercase().to_string()
-                        } else {
-                            c.to_uppercase().to_string()
-                        }
-                    })
-                    .collect()
-            });
+            apply_text_transform(state, crate::editor::text_transforms::inverse_case);
             Task::none()
         }
 
@@ -1187,17 +1073,17 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::ZoomIn => {
             if state.active_pane == 1 && state.split_mode != SplitMode::None {
-                state.split_font_size = (state.split_font_size + 2.0).min(72.0);
+                state.split_font_size = crate::editor::text_transforms::clamp_zoom(state.split_font_size, 2.0);
             } else {
-                state.font_size = (state.font_size + 2.0).min(72.0);
+                state.font_size = crate::editor::text_transforms::clamp_zoom(state.font_size, 2.0);
             }
             Task::none()
         }
         Message::ZoomOut => {
             if state.active_pane == 1 && state.split_mode != SplitMode::None {
-                state.split_font_size = (state.split_font_size - 2.0).max(6.0);
+                state.split_font_size = crate::editor::text_transforms::clamp_zoom(state.split_font_size, -2.0);
             } else {
-                state.font_size = (state.font_size - 2.0).max(6.0);
+                state.font_size = crate::editor::text_transforms::clamp_zoom(state.font_size, -2.0);
             }
             Task::none()
         }
@@ -1549,23 +1435,17 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::FindNext => {
-            if !state.search_matches.is_empty() {
-                let next = match state.current_match_index {
-                    Some(i) => (i + 1) % state.search_matches.len(),
-                    None => 0,
-                };
-                state.current_match_index = Some(next);
-            }
+            state.current_match_index = crate::editor::text_transforms::next_match_index(
+                state.current_match_index,
+                state.search_matches.len(),
+            );
             Task::none()
         }
         Message::FindPrev => {
-            if !state.search_matches.is_empty() {
-                let prev = match state.current_match_index {
-                    Some(0) | None => state.search_matches.len() - 1,
-                    Some(i) => i - 1,
-                };
-                state.current_match_index = Some(prev);
-            }
+            state.current_match_index = crate::editor::text_transforms::prev_match_index(
+                state.current_match_index,
+                state.search_matches.len(),
+            );
             Task::none()
         }
         Message::ReplaceNext => {
@@ -1625,22 +1505,19 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::GotoLineConfirm => {
-            if let Ok(line_num) = state.goto_line_input.trim().parse::<usize>() {
-                if line_num > 0 {
-                    let target = line_num - 1;
-                    state
-                        .tab_manager
-                        .active_document_mut()
-                        .cursor
-                        .position
-                        .line = target;
-                    state
-                        .tab_manager
-                        .active_document_mut()
-                        .cursor
-                        .position
-                        .col = 0;
-                }
+            if let Some(target) = crate::editor::text_transforms::parse_goto_line(&state.goto_line_input) {
+                state
+                    .tab_manager
+                    .active_document_mut()
+                    .cursor
+                    .position
+                    .line = target;
+                state
+                    .tab_manager
+                    .active_document_mut()
+                    .cursor
+                    .position
+                    .col = 0;
             }
             state.show_goto_line = false;
             Task::none()
@@ -1686,34 +1563,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             if let Ok(other_text) = result {
                 let current_text = get_buffer_text(state);
                 let diff_result = crate::tools::diff_tool::diff_texts(&current_text, &other_text);
-                let mut diff_text = String::new();
-                for line in &diff_result.lines {
-                    match line {
-                        crate::tools::diff_tool::DiffLine::Same(s) => {
-                            diff_text.push_str("  ");
-                            diff_text.push_str(s);
-                            diff_text.push('\n');
-                        }
-                        crate::tools::diff_tool::DiffLine::Added(s) => {
-                            diff_text.push_str("+ ");
-                            diff_text.push_str(s);
-                            diff_text.push('\n');
-                        }
-                        crate::tools::diff_tool::DiffLine::Removed(s) => {
-                            diff_text.push_str("- ");
-                            diff_text.push_str(s);
-                            diff_text.push('\n');
-                        }
-                        crate::tools::diff_tool::DiffLine::Changed { old, new } => {
-                            diff_text.push_str("- ");
-                            diff_text.push_str(old);
-                            diff_text.push('\n');
-                            diff_text.push_str("+ ");
-                            diff_text.push_str(new);
-                            diff_text.push('\n');
-                        }
-                    }
-                }
+                let diff_text = crate::editor::text_transforms::format_diff_output(&diff_result);
                 state.tab_manager.new_tab();
                 state.tab_contents.push(TabContent::with_text(&diff_text));
                 state.tab_manager.active_document_mut().language = "Diff".to_string();
@@ -3219,18 +3069,8 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         if let Some(tc) = state.tab_contents.get(active) {
             let (cursor_line, cursor_col) = tc.content.cursor_position();
             let doc = state.tab_manager.active_document();
-            let enc = match doc.encoding {
-                Encoding::UTF8 => "UTF-8",
-                Encoding::UTF8BOM => "UTF-8 BOM",
-                Encoding::UTF16LE => "UTF-16 LE",
-                Encoding::UTF16BE => "UTF-16 BE",
-                Encoding::ASCII => "ASCII",
-            };
-            let le = match doc.line_ending {
-                LineEnding::LF => "LF",
-                LineEnding::CRLF => "CRLF",
-                LineEnding::CR => "CR",
-            };
+            let enc = crate::editor::text_transforms::encoding_display_name(&doc.encoding);
+            let le = crate::editor::text_transforms::line_ending_display_name(&doc.line_ending);
             let lang = if doc.language.is_empty() {
                 "Plain Text"
             } else {
@@ -3253,10 +3093,8 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             )
         };
 
-    let status_text = text(format!(
-        "  Ln {}, Col {}    {}    {}    {}{}",
-        line, col, encoding_str, line_ending_str, language,
-        if state.show_whitespace { "    WS" } else { "" }
+    let status_text = text(crate::editor::text_transforms::format_status_bar(
+        line, col, &encoding_str, &line_ending_str, &language, state.show_whitespace,
     ))
     .size(12);
 

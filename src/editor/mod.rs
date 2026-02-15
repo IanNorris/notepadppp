@@ -1,4 +1,6 @@
 pub mod autoclose;
+pub mod line_ops;
+pub mod text_transforms;
 pub mod bookmarks;
 pub mod brackets;
 pub mod buffer;
