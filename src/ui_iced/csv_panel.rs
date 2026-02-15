@@ -1,17 +1,16 @@
 use iced::widget::{button, column, container, row, scrollable, text, Space};
-use iced::{Element, Font, Length, Theme};
+use iced::{Color, Element, Font, Length, Theme};
 
 use super::app::{Message, NotepadIced};
-use super::theme::AppColors;
+use super::theme::AppTheme;
 use crate::tools::csv_viewer::parse_csv;
 
-const PANEL_BG: iced::Color = iced::Color::from_rgb(0.12, 0.12, 0.14);
-const HEADER_BG: iced::Color = iced::Color::from_rgb(0.16, 0.16, 0.20);
-const ROW_EVEN: iced::Color = iced::Color::from_rgb(0.13, 0.13, 0.16);
-const ROW_ODD: iced::Color = iced::Color::from_rgb(0.15, 0.15, 0.18);
-const CELL_BORDER: iced::Color = iced::Color::from_rgb(0.22, 0.22, 0.26);
-
-pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
+pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let t_background = theme.background;
+    let t_tab_bar_bg = theme.tab_bar_bg;
+    let t_border = theme.border;
+    let t_text = theme.text;
+    let t_text_dim = theme.text_dim;
     let content_text = state
         .tab_contents
         .get(state.tab_manager.active_index())
@@ -22,14 +21,14 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     if csv_data.headers.is_empty() {
         return container(
-            text("No CSV data to display").size(14).color(AppColors::TEXT_DIM),
+            text("No CSV data to display").size(14).color(t_text_dim),
         )
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(PANEL_BG)),
+            background: Some(iced::Background::Color(t_background)),
             ..Default::default()
         })
         .into();
@@ -43,19 +42,19 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     // Toolbar
     let toolbar = row![
-        text("CSV Viewer").size(13).color(AppColors::TEXT),
+        text("CSV Viewer").size(13).color(t_text),
         Space::with_width(Length::Fill),
         button(
             text(if state.csv_has_headers { "Headers: On" } else { "Headers: Off" })
                 .size(12)
-                .color(AppColors::TEXT),
+                .color(t_text),
         )
         .on_press(Message::CsvToggleHeaders)
-        .style(|_theme: &Theme, _status| button::Style {
-            background: Some(iced::Background::Color(HEADER_BG)),
-            text_color: AppColors::TEXT,
+        .style(move |_theme: &Theme, _status| button::Style {
+            background: Some(iced::Background::Color(t_tab_bar_bg)),
+            text_color: t_text,
             border: iced::Border {
-                color: CELL_BORDER,
+                color: t_border,
                 width: 1.0,
                 radius: 3.0.into(),
             },
@@ -68,10 +67,10 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     let toolbar_bar = container(toolbar)
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(HEADER_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_tab_bar_bg)),
             border: iced::Border {
-                color: CELL_BORDER,
+                color: t_border,
                 width: 0.0,
                 radius: 0.0.into(),
             },
@@ -86,17 +85,17 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     // Row number header
     header_cells.push(
         container(
-            text("#").size(12).color(AppColors::TEXT_DIM).font(Font {
+            text("#").size(12).color(t_text_dim).font(Font {
                 weight: iced::font::Weight::Bold,
                 ..Font::DEFAULT
             }),
         )
         .width(Length::Fixed(40.0))
         .padding([4, 6])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(HEADER_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_tab_bar_bg)),
             border: iced::Border {
-                color: CELL_BORDER,
+                color: t_border,
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -118,7 +117,7 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 container(
                     text(label)
                         .size(12)
-                        .color(AppColors::TEXT)
+                        .color(t_text)
                         .font(Font {
                             weight: iced::font::Weight::Bold,
                             ..Font::DEFAULT
@@ -128,16 +127,16 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 .width(Length::Fixed(cell_width)),
             )
             .on_press(Message::CsvSortColumn(i))
-            .style(|_theme: &Theme, status| {
+            .style(move |_theme: &Theme, status| {
                 let bg = match status {
-                    button::Status::Hovered | button::Status::Pressed => ROW_ODD,
-                    _ => HEADER_BG,
+                    button::Status::Hovered | button::Status::Pressed => t_tab_bar_bg,
+                    _ => t_tab_bar_bg,
                 };
                 button::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: AppColors::TEXT,
+                    text_color: t_text,
                     border: iced::Border {
-                        color: CELL_BORDER,
+                        color: t_border,
                         width: 1.0,
                         radius: 0.0.into(),
                     },
@@ -155,7 +154,7 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let mut data_rows = column![].spacing(0);
 
     for (row_idx, data_row) in csv_data.rows.iter().enumerate() {
-        let bg = if row_idx % 2 == 0 { ROW_EVEN } else { ROW_ODD };
+        let bg = if row_idx % 2 == 0 { t_background } else { t_tab_bar_bg };
 
         let mut cells: Vec<Element<'a, Message>> = Vec::new();
 
@@ -164,14 +163,14 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             container(
                 text(format!("{}", row_idx + 1))
                     .size(12)
-                    .color(AppColors::TEXT_DIM),
+                    .color(t_text_dim),
             )
             .width(Length::Fixed(40.0))
             .padding([3, 6])
             .style(move |_theme: &Theme| container::Style {
                 background: Some(iced::Background::Color(bg)),
                 border: iced::Border {
-                    color: CELL_BORDER,
+                    color: t_border,
                     width: 1.0,
                     radius: 0.0.into(),
                 },
@@ -188,14 +187,14 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
             cells.push(
                 container(
-                    text(cell_text.to_string()).size(12).color(AppColors::TEXT),
+                    text(cell_text.to_string()).size(12).color(t_text),
                 )
                 .width(Length::Fixed(cell_width))
                 .padding([3, 6])
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(bg)),
                     border: iced::Border {
-                        color: CELL_BORDER,
+                        color: t_border,
                         width: 1.0,
                         radius: 0.0.into(),
                     },
@@ -218,8 +217,8 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     container(panel)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(PANEL_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_background)),
             ..Default::default()
         })
         .into()

@@ -12,7 +12,7 @@ use crate::search::find_in_files::FileSearchResult;
 
 use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
-use super::theme::AppColors;
+use super::theme::{AppColors, AppTheme};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SplitMode {
@@ -177,7 +177,7 @@ pub enum Message {
     PrefFontSizeIncrease,
     PrefFontSizeDecrease,
     PrefTabSizeChanged(String),
-    PrefToggleTheme,
+    PrefSetTheme(String),
     PrefToggleAutoSave(bool),
     PrefToggleWordWrap(bool),
     PrefToggleLineNumbers(bool),
@@ -186,6 +186,9 @@ pub enum Message {
     // Help
     ShowAbout,
     CloseAbout,
+
+    // Theme
+    SetTheme(String),
 
     // Search panel
     FindQueryChanged(String),
@@ -337,6 +340,9 @@ pub struct NotepadIced {
     pub split_font_size: f32,
     pub split_file_extension: String,
     pub active_pane: usize, // 0 = primary, 1 = secondary
+
+    // Theme
+    pub theme: AppTheme,
 }
 
 impl Default for NotepadIced {
@@ -407,6 +413,7 @@ impl Default for NotepadIced {
             split_font_size: 14.0,
             split_file_extension: String::new(),
             active_pane: 0,
+            theme: AppTheme::dark(),
         }
     }
 }
@@ -434,7 +441,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::CloseAbout
             | Message::SavePreferences | Message::CancelPreferences
             | Message::PrefFontSizeIncrease | Message::PrefFontSizeDecrease
-            | Message::PrefTabSizeChanged(_) | Message::PrefToggleTheme
+            | Message::PrefTabSizeChanged(_) | Message::PrefSetTheme(_)
             | Message::PrefToggleAutoSave(_) | Message::PrefToggleWordWrap(_)
             | Message::PrefToggleLineNumbers(_) | Message::PrefToggleWhitespace(_)
             | Message::CloseKeybindingsDialog
@@ -1367,7 +1374,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             .unwrap_or_default();
             state.pref_font_size = settings.font_size;
             state.pref_tab_size = settings.tab_size.to_string();
-            state.pref_theme = settings.theme.clone();
+            state.pref_theme = state.theme.name.clone();
             state.pref_auto_save = settings.auto_save;
             state.pref_word_wrap = settings.word_wrap;
             state.pref_show_line_numbers = settings.show_line_numbers;
@@ -1400,6 +1407,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.word_wrap = settings.word_wrap;
             state.show_line_numbers = settings.show_line_numbers;
             state.show_whitespace = settings.show_whitespace;
+            state.theme = AppColors::theme_by_name(&state.pref_theme);
             state.show_preferences = false;
             Task::none()
         }
@@ -1423,12 +1431,8 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.pref_tab_size = val;
             Task::none()
         }
-        Message::PrefToggleTheme => {
-            state.pref_theme = if state.pref_theme == "light" {
-                String::from("base16-ocean.dark")
-            } else {
-                String::from("light")
-            };
+        Message::PrefSetTheme(name) => {
+            state.pref_theme = name;
             Task::none()
         }
         Message::PrefToggleAutoSave(v) => {
@@ -1455,6 +1459,20 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::CloseAbout => {
             state.show_about = false;
+            Task::none()
+        }
+
+        // ── Theme ──
+        Message::SetTheme(name) => {
+            state.theme = AppColors::theme_by_name(&name);
+            state.pref_theme = name.clone();
+            // Persist theme to settings
+            let mut settings = crate::io::settings::AppSettings::load(
+                &crate::io::settings::AppSettings::settings_path(),
+            )
+            .unwrap_or_default();
+            settings.theme = name;
+            let _ = settings.save(&crate::io::settings::AppSettings::settings_path());
             Task::none()
         }
 
@@ -1890,12 +1908,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 }
 
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
-    let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
+    let menu_bar = menu_bar::view_menu_bar(&state.active_menu, &state.theme);
     let tab_bar = view_tab_bar(state);
 
     // Build the main content area based on active viewer panels
     let main_area: Element<'_, Message> = if state.show_csv_viewer {
-        super::csv_panel::view_csv_viewer(state)
+        super::csv_panel::view_csv_viewer(state, &state.theme)
     } else if state.show_hex_viewer {
         super::hex_panel::view_hex_viewer(state)
     } else {
@@ -1910,12 +1928,13 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         // Wrap editor with split view if active
         let editor_area = if state.split_mode != SplitMode::None {
             let split_pane = view_split_pane(state);
+            let border_color = state.theme.border;
             let divider = container(Space::new(
                 if state.split_mode == SplitMode::Horizontal { Length::Fixed(2.0) } else { Length::Fill },
                 if state.split_mode == SplitMode::Vertical { Length::Fixed(2.0) } else { Length::Fill },
             ))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(AppColors::BORDER)),
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(border_color)),
                 ..Default::default()
             });
 
@@ -2002,14 +2021,16 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 
             let left_offset = menu_bar::menu_x_offset(menu_name);
 
+            let tab_bar_bg = state.theme.tab_bar_bg;
+            let dropdown_border = state.theme.border;
             let dropdown_overlay: Element<'_, Message> = container(
                 opaque(
                     container(dropdown)
                         .max_height(500)
-                        .style(|_theme: &Theme| container::Style {
-                            background: Some(iced::Background::Color(super::theme::AppColors::TAB_BAR_BG)),
+                        .style(move |_theme: &Theme| container::Style {
+                            background: Some(iced::Background::Color(tab_bar_bg)),
                             border: iced::Border {
-                                color: iced::Color::from_rgb(0.3, 0.3, 0.35),
+                                color: dropdown_border,
                                 width: 1.0,
                                 radius: 4.0.into(),
                             },
@@ -2218,8 +2239,12 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
     })
 }
 
-pub fn theme(_state: &NotepadIced) -> Theme {
-    Theme::Dark
+pub fn theme(state: &NotepadIced) -> Theme {
+    if state.theme.is_light {
+        Theme::Light
+    } else {
+        Theme::Dark
+    }
 }
 
 // ── helpers ──
@@ -2299,6 +2324,13 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let active = state.tab_manager.active_index();
     let is_active_pane = state.active_pane == 0;
 
+    let t_tab_active = state.theme.tab_active_bg;
+    let t_tab_inactive = state.theme.tab_inactive_bg;
+    let t_text = state.theme.text;
+    let t_text_dim = state.theme.text_dim;
+    let t_accent = state.theme.accent;
+    let t_tab_bar = state.theme.tab_bar_bg;
+
     let mut tabs = row![].spacing(2).padding([2, 4]);
 
     for i in 0..count {
@@ -2306,18 +2338,18 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         let is_active = i == active;
 
         let bg_color = if is_active {
-            AppColors::TAB_ACTIVE_BG
+            t_tab_active
         } else {
-            AppColors::TAB_INACTIVE_BG
+            t_tab_inactive
         };
 
         let label = text(tab_title).size(13);
         let close = button(text("x").size(13))
             .on_press(Message::CloseTab(i))
             .padding(2)
-            .style(|_theme: &Theme, _status| button::Style {
+            .style(move |_theme: &Theme, _status| button::Style {
                 background: None,
-                text_color: AppColors::TEXT_DIM,
+                text_color: t_text_dim,
                 ..Default::default()
             });
 
@@ -2325,7 +2357,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             .on_press(Message::SelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()
@@ -2340,9 +2372,9 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let add_btn = button(text("+").size(13))
         .on_press(Message::NewTab)
         .padding([2, 8])
-        .style(|_theme: &Theme, _status| button::Style {
+        .style(move |_theme: &Theme, _status| button::Style {
             background: None,
-            text_color: AppColors::TEXT_DIM,
+            text_color: t_text_dim,
             border: iced::Border {
                 radius: 4.0.into(),
                 ..Default::default()
@@ -2352,15 +2384,15 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     tabs = tabs.push(add_btn);
 
     let border_color = if is_active_pane {
-        AppColors::ACCENT
+        t_accent
     } else {
-        AppColors::TAB_BAR_BG
+        t_tab_bar
     };
 
     container(tabs)
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
+            background: Some(iced::Background::Color(t_tab_bar)),
             border: iced::Border {
                 color: border_color,
                 width: if is_active_pane { 1.0 } else { 0.0 },
@@ -2373,6 +2405,8 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
 fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let active = state.tab_manager.active_index();
+    let t_text_dim = state.theme.text_dim;
+    let t_bg = state.theme.background;
 
     if let Some(tc) = state.tab_contents.get(active) {
         let wrapping = if state.word_wrap {
@@ -2389,7 +2423,7 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             .highlight_with::<SyntectHighlighter>(
                 SyntectSettings {
                     extension: state.file_extension.clone(),
-                    theme: "base16-ocean.dark".to_string(),
+                    theme: state.theme.syntect_theme().to_string(),
                 },
                 |highlight, _theme| highlight.to_format(),
             );
@@ -2412,7 +2446,7 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
                 let line_label = text(format!("{}{}", fold_indicator, i))
                     .size(state.font_size)
-                    .color(AppColors::TEXT_DIM);
+                    .color(t_text_dim);
 
                 let line_widget: Element<'_, Message> = if state.fold_manager.is_fold_point(line_idx) {
                     mouse_area(
@@ -2436,8 +2470,8 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
             let gutter = container(scrollable(gutter_col))
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 });
 
@@ -2446,8 +2480,8 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             container(editor_row)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 })
                 .into()
@@ -2455,8 +2489,8 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             container(editor)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 })
                 .into()
@@ -2473,6 +2507,15 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let is_active_pane = state.active_pane == 1;
 
+    let t_tab_active = state.theme.tab_active_bg;
+    let t_tab_inactive = state.theme.tab_inactive_bg;
+    let t_text = state.theme.text;
+    let t_text_dim = state.theme.text_dim;
+    let t_accent = state.theme.accent;
+    let t_tab_bar = state.theme.tab_bar_bg;
+    let t_bg = state.theme.background;
+    let t_status = state.theme.status_bar_bg;
+
     // Tab bar for split pane
     let count = state.split_tab_manager.tab_count();
     let active = state.split_tab_manager.active_index();
@@ -2484,18 +2527,18 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         let is_active_tab = i == active;
 
         let bg_color = if is_active_tab {
-            AppColors::TAB_ACTIVE_BG
+            t_tab_active
         } else {
-            AppColors::TAB_INACTIVE_BG
+            t_tab_inactive
         };
 
         let label = text(tab_title).size(13);
         let close = button(text("x").size(13))
             .on_press(Message::SplitCloseTab(i))
             .padding(2)
-            .style(|_theme: &Theme, _status| button::Style {
+            .style(move |_theme: &Theme, _status| button::Style {
                 background: None,
-                text_color: AppColors::TEXT_DIM,
+                text_color: t_text_dim,
                 ..Default::default()
             });
 
@@ -2503,7 +2546,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             .on_press(Message::SplitSelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()
@@ -2518,9 +2561,9 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let add_btn = button(text("+").size(13))
         .on_press(Message::SplitNewTab)
         .padding([2, 8])
-        .style(|_theme: &Theme, _status| button::Style {
+        .style(move |_theme: &Theme, _status| button::Style {
             background: None,
-            text_color: AppColors::TEXT_DIM,
+            text_color: t_text_dim,
             border: iced::Border {
                 radius: 4.0.into(),
                 ..Default::default()
@@ -2530,15 +2573,15 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     tabs = tabs.push(add_btn);
 
     let border_color = if is_active_pane {
-        AppColors::ACCENT
+        t_accent
     } else {
-        AppColors::TAB_BAR_BG
+        t_tab_bar
     };
 
     let split_tab_bar: Element<'_, Message> = container(tabs)
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
+            background: Some(iced::Background::Color(t_tab_bar)),
             border: iced::Border {
                 color: border_color,
                 width: if is_active_pane { 1.0 } else { 0.0 },
@@ -2564,7 +2607,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             .highlight_with::<SyntectHighlighter>(
                 SyntectSettings {
                     extension: state.split_file_extension.clone(),
-                    theme: "base16-ocean.dark".to_string(),
+                    theme: state.theme.syntect_theme().to_string(),
                 },
                 |highlight, _theme| highlight.to_format(),
             );
@@ -2578,7 +2621,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             for i in 1..=line_count {
                 let line_label = text(format!("    {}", i))
                     .size(state.split_font_size)
-                    .color(AppColors::TEXT_DIM);
+                    .color(t_text_dim);
 
                 let line_widget: Element<'_, Message> = container(line_label)
                     .width(Length::Fixed(gutter_width))
@@ -2591,8 +2634,8 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
             let gutter = container(scrollable(gutter_col))
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 });
 
@@ -2601,8 +2644,8 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             container(editor_row)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 })
                 .into()
@@ -2610,8 +2653,8 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             container(editor_widget)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
                 })
                 .into()
@@ -2638,8 +2681,8 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     )
     .width(Length::Fill)
     .padding([2, 8])
-    .style(|_theme: &Theme| container::Style {
-        background: Some(iced::Background::Color(AppColors::STATUS_BAR_BG)),
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(t_status)),
         ..Default::default()
     })
     .into();
@@ -2655,6 +2698,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
 fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let active = state.tab_manager.active_index();
+    let t_status = state.theme.status_bar_bg;
     let (line, col, encoding_str, line_ending_str, language) =
         if let Some(tc) = state.tab_contents.get(active) {
             let (cursor_line, cursor_col) = tc.content.cursor_position();
@@ -2703,8 +2747,8 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     container(status_text)
         .width(Length::Fill)
         .padding([2, 8])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(AppColors::STATUS_BAR_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_status)),
             ..Default::default()
         })
         .into()
