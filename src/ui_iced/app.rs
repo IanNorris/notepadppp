@@ -116,6 +116,9 @@ pub enum Message {
     RemoveBookmarkedLines,
     RemoveUnbookmarkedLines,
 
+    // Edit
+    ToggleReadOnly,
+
     // View
     ToggleWordWrap,
     ToggleLineNumbers,
@@ -123,6 +126,7 @@ pub enum Message {
     ToggleStatusBar,
     ToggleMinimap,
     ToggleFunctionList,
+    ToggleFullScreen,
     SplitHorizontal,
     SplitVertical,
     RemoveSplit,
@@ -361,6 +365,12 @@ pub struct NotepadIced {
 
     // Tab context menu: (tab_index, is_split_pane)
     pub tab_context_menu: Option<(usize, bool)>,
+
+    // Full screen mode
+    pub is_fullscreen: bool,
+
+    // Double-click tracking for tab close
+    pub last_tab_click: Option<(usize, std::time::Instant)>,
 }
 
 impl Default for NotepadIced {
@@ -439,6 +449,8 @@ impl Default for NotepadIced {
             active_pane: 0,
             theme,
             tab_context_menu: None,
+            is_fullscreen: false,
+            last_tab_click: None,
         }
     }
 }
@@ -492,6 +504,10 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
     match message {
         Message::EditorAction(action) => {
             state.active_pane = 0;
+            // Block editing actions when document is read-only
+            if action.is_edit() && state.tab_manager.active_document().read_only {
+                return Task::none();
+            }
             if let Some(tc) = state
                 .tab_contents
                 .get_mut(state.tab_manager.active_index())
@@ -605,6 +621,16 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SelectTab(idx) => {
+            // Double-click detection: close tab on double-click
+            let now = std::time::Instant::now();
+            if let Some((last_idx, last_time)) = state.last_tab_click {
+                if last_idx == idx && now.duration_since(last_time).as_millis() < 400 {
+                    state.last_tab_click = None;
+                    return update(state, Message::CloseTab(idx));
+                }
+            }
+            state.last_tab_click = Some((idx, now));
+
             if idx < state.tab_manager.tab_count() {
                 state.tab_manager.set_active(idx);
                 // Update file extension from the newly active tab's path
@@ -639,6 +665,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             let buf_text = doc.buffer.text();
             let idx = state.tab_manager.active_index();
             state.tab_contents[idx] = TabContent::with_text(&buf_text);
+            Task::none()
+        }
+
+        Message::ToggleReadOnly => {
+            let doc = state.tab_manager.active_document_mut();
+            doc.read_only = !doc.read_only;
             Task::none()
         }
 
@@ -1032,6 +1064,18 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::ToggleFunctionList => {
             state.show_function_list = !state.show_function_list;
             Task::none()
+        }
+        Message::ToggleFullScreen => {
+            state.is_fullscreen = !state.is_fullscreen;
+            let is_fs = state.is_fullscreen;
+            iced::window::get_oldest().and_then(move |id| {
+                let mode = if is_fs {
+                    iced::window::Mode::Fullscreen
+                } else {
+                    iced::window::Mode::Windowed
+                };
+                iced::window::change_mode(id, mode)
+            })
         }
         Message::SplitHorizontal => {
             if state.split_mode == SplitMode::Vertical {
@@ -2489,6 +2533,9 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
             keyboard::Key::Named(keyboard::key::Named::F2) => {
                 return Some(Message::NextBookmark);
             }
+            keyboard::Key::Named(keyboard::key::Named::F11) => {
+                return Some(Message::ToggleFullScreen);
+            }
             _ => {}
         }
 
@@ -2519,6 +2566,7 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
                 Some(Message::ToggleMacroRecording)
             }
             keyboard::Key::Character("p") if modifiers.shift() => Some(Message::PlayLastMacro),
+            keyboard::Key::Character("e") if modifiers.shift() => Some(Message::ToggleReadOnly),
             _ => None,
         }
     });
@@ -2610,6 +2658,9 @@ fn set_buffer_text(state: &mut NotepadIced, text: &str) {
 
 /// Apply a line-based transform: split text into lines, call the closure, rejoin, update buffer.
 fn apply_line_op(state: &mut NotepadIced, op: impl FnOnce(&mut Vec<String>, usize)) {
+    if state.tab_manager.active_document().read_only {
+        return;
+    }
     let text = get_buffer_text(state);
     let cursor_line = state
         .tab_contents
@@ -2625,6 +2676,9 @@ fn apply_line_op(state: &mut NotepadIced, op: impl FnOnce(&mut Vec<String>, usiz
 
 /// Apply a whole-text transform.
 fn apply_text_transform(state: &mut NotepadIced, transform: impl FnOnce(&str) -> String) {
+    if state.tab_manager.active_document().read_only {
+        return;
+    }
     let text = get_buffer_text(state);
     let new_text = transform(&text);
     set_buffer_text(state, &new_text);
@@ -2734,11 +2788,15 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     tabs = tabs.push(iced::widget::horizontal_space().width(4));
     tabs = tabs.push(add_btn);
 
-    container(tabs)
+    scrollable(tabs)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(3).scroller_width(3),
+        ))
         .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(t_tab_bar)),
-            ..Default::default()
+        .style(move |theme: &Theme, status| {
+            let mut style = iced::widget::scrollable::default(theme, status);
+            style.container.background = Some(iced::Background::Color(t_tab_bar));
+            style
         })
         .into()
 }
@@ -2940,11 +2998,15 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     tabs = tabs.push(iced::widget::horizontal_space().width(4));
     tabs = tabs.push(add_btn);
 
-    container(tabs)
+    scrollable(tabs)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(3).scroller_width(3),
+        ))
         .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(t_tab_bar)),
-            ..Default::default()
+        .style(move |theme: &Theme, status| {
+            let mut style = iced::widget::scrollable::default(theme, status);
+            style.container.background = Some(iced::Background::Color(t_tab_bar));
+            style
         })
         .into()
 }
@@ -3093,10 +3155,14 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             )
         };
 
-    let status_text = text(crate::editor::text_transforms::format_status_bar(
+    let is_read_only = state.tab_manager.active_document().read_only;
+    let mut status_string = crate::editor::text_transforms::format_status_bar(
         line, col, &encoding_str, &line_ending_str, &language, state.show_whitespace,
-    ))
-    .size(12);
+    );
+    if is_read_only {
+        status_string.push_str("    [READ ONLY]");
+    }
+    let status_text = text(status_string).size(12);
 
     container(status_text)
         .width(Length::Fill)

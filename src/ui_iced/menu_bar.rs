@@ -232,6 +232,10 @@ fn build_edit_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
     }
     push_submenu(&mut items, "Line Endings", expanded, le_children, t);
 
+    items.push(separator(t));
+    let ro = state.tab_manager.active_document().read_only;
+    items.push(check_item("Read Only", ro, Message::ToggleReadOnly, t));
+
     items
 }
 
@@ -274,6 +278,8 @@ fn build_view_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
         menu_item("Zoom In", "Ctrl+=", Message::ZoomIn, t),
         menu_item("Zoom Out", "Ctrl+-", Message::ZoomOut, t),
         menu_item("Reset Zoom", "Ctrl+0", Message::ZoomReset, t),
+        separator(t),
+        check_item("Full Screen", state.is_fullscreen, Message::ToggleFullScreen, t),
         separator(t),
     ];
     push_submenu(&mut items, "Folding", expanded, vec![
