@@ -1,7 +1,11 @@
 pub mod about_dialog;
 pub mod app;
+pub mod csv_panel;
+pub mod function_list_panel;
 pub mod goto_dialog;
+pub mod hex_panel;
 pub mod highlighter;
+pub mod markdown_panel;
 pub mod menu_bar;
 pub mod search_panel;
 pub mod theme;

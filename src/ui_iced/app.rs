@@ -13,8 +13,8 @@ use super::menu_bar;
 use super::theme::AppColors;
 
 /// Per-tab state that pairs an iced text_editor::Content with our Document index.
-struct TabContent {
-    content: text_editor::Content,
+pub struct TabContent {
+    pub content: text_editor::Content,
 }
 
 impl TabContent {
@@ -188,11 +188,16 @@ pub enum Message {
     DragFindStart,
     DragFindMove(iced::Point),
     DragFindEnd,
+
+    // Panel messages
+    GotoSymbol(usize),
+    CsvSortColumn(usize),
+    CsvToggleHeaders,
 }
 
 pub struct NotepadIced {
     pub tab_manager: TabManager,
-    tab_contents: Vec<TabContent>,
+    pub tab_contents: Vec<TabContent>,
 
     // Menu state
     pub active_menu: Option<String>,
@@ -208,6 +213,11 @@ pub struct NotepadIced {
     pub show_markdown_preview: bool,
     pub show_csv_viewer: bool,
     pub show_hex_viewer: bool,
+
+    // CSV viewer state
+    pub csv_sort_column: Option<usize>,
+    pub csv_sort_ascending: bool,
+    pub csv_has_headers: bool,
 
     // Session
     pub auto_restore_session: bool,
@@ -263,6 +273,9 @@ impl Default for NotepadIced {
             show_markdown_preview: false,
             show_csv_viewer: false,
             show_hex_viewer: false,
+            csv_sort_column: None,
+            csv_sort_ascending: true,
+            csv_has_headers: true,
             auto_restore_session: false,
             show_find: false,
             show_replace: false,
@@ -1105,6 +1118,41 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // ── Panel messages ──
+        Message::GotoSymbol(line) => {
+            // Navigate to the given line in the editor
+            // We use the same goto-line logic
+            let idx = state.tab_manager.active_index();
+            if let Some(tc) = state.tab_contents.get(idx) {
+                let text = tc.content.text();
+                let mut offset = 0;
+                for (i, text_line) in text.lines().enumerate() {
+                    if i == line {
+                        break;
+                    }
+                    offset += text_line.len() + 1; // +1 for newline
+                }
+                // Rebuild content positioned at the start (we can't move cursor directly,
+                // so just log the target for now — full cursor navigation requires
+                // editor action support which iced text_editor doesn't expose)
+                log::info!("Navigate to symbol at line {}", line + 1);
+            }
+            Task::none()
+        }
+        Message::CsvSortColumn(col) => {
+            if state.csv_sort_column == Some(col) {
+                state.csv_sort_ascending = !state.csv_sort_ascending;
+            } else {
+                state.csv_sort_column = Some(col);
+                state.csv_sort_ascending = true;
+            }
+            Task::none()
+        }
+        Message::CsvToggleHeaders => {
+            state.csv_has_headers = !state.csv_has_headers;
+            Task::none()
+        }
+
         // ── Macro ──
         Message::ToggleMacroRecording => {
             if state.macro_recorder.is_recording() {
@@ -1396,9 +1444,36 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let menu_bar = menu_bar::view_menu_bar(&state.active_menu);
     let tab_bar = view_tab_bar(state);
-    let editor = view_editor(state);
 
-    let mut base_content = column![menu_bar, tab_bar, editor];
+    // Build the main content area based on active viewer panels
+    let main_area: Element<'_, Message> = if state.show_csv_viewer {
+        super::csv_panel::view_csv_viewer(state)
+    } else if state.show_hex_viewer {
+        super::hex_panel::view_hex_viewer(state)
+    } else {
+        // Normal editor, possibly with side panels
+        let editor = view_editor(state);
+
+        if state.show_markdown_preview {
+            row![
+                container(editor).width(Length::FillPortion(1)),
+                super::markdown_panel::view_markdown_preview(state),
+            ]
+            .height(Length::Fill)
+            .into()
+        } else if state.show_function_list {
+            row![
+                container(editor).width(Length::Fill),
+                super::function_list_panel::view_function_list(state),
+            ]
+            .height(Length::Fill)
+            .into()
+        } else {
+            editor
+        }
+    };
+
+    let mut base_content = column![menu_bar, tab_bar, main_area];
 
     if state.show_status_bar {
         base_content = base_content.push(view_status_bar(state));
