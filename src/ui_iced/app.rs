@@ -1253,21 +1253,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         // ── Panel messages ──
         Message::GotoSymbol(line) => {
             // Navigate to the given line in the editor
-            // We use the same goto-line logic
             let idx = state.tab_manager.active_index();
-            if let Some(tc) = state.tab_contents.get(idx) {
-                let text = tc.content.text();
-                let mut offset = 0;
-                for (i, text_line) in text.lines().enumerate() {
-                    if i == line {
-                        break;
-                    }
-                    offset += text_line.len() + 1; // +1 for newline
-                }
-                // Rebuild content positioned at the start (we can't move cursor directly,
-                // so just log the target for now — full cursor navigation requires
-                // editor action support which iced text_editor doesn't expose)
-                log::info!("Navigate to symbol at line {}", line + 1);
+            if let Some(_tc) = state.tab_contents.get(idx) {
+                // Set document cursor position (visual cursor movement
+                // not possible with iced text_editor)
+                state.tab_manager.active_document_mut().cursor.position.line = line;
+                state.tab_manager.active_document_mut().cursor.position.col = 0;
+            }
             }
             Task::none()
         }
