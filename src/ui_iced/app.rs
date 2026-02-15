@@ -1915,7 +1915,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let main_area: Element<'_, Message> = if state.show_csv_viewer {
         super::csv_panel::view_csv_viewer(state, &state.theme)
     } else if state.show_hex_viewer {
-        super::hex_panel::view_hex_viewer(state)
+        super::hex_panel::view_hex_viewer(state, &state.theme)
     } else {
         // Normal editor, possibly with side panels
         let editor = view_editor(state);
@@ -1967,14 +1967,14 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         if state.show_markdown_preview {
             row![
                 container(editor_area).width(Length::FillPortion(1)),
-                super::markdown_panel::view_markdown_preview(state),
+                super::markdown_panel::view_markdown_preview(state, &state.theme),
             ]
             .height(Length::Fill)
             .into()
         } else if state.show_function_list {
             row![
                 container(editor_area).width(Length::Fill),
-                super::function_list_panel::view_function_list(state),
+                super::function_list_panel::view_function_list(state, &state.theme),
             ]
             .height(Length::Fill)
             .into()
@@ -2100,7 +2100,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             layers.push(drag_tracker);
         }
 
-        let fif_widget = opaque(super::find_in_files_panel::view_find_in_files_panel(state));
+        let fif_widget = opaque(super::find_in_files_panel::view_find_in_files_panel(state, &state.theme));
 
         let fif_overlay: Element<'_, Message> = match state.fif_panel_pos {
             Some((x, y)) => {
