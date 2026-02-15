@@ -261,15 +261,40 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                     // Show raw (the comment has the raw form when resolved)
                     line.comment.clone().unwrap_or_else(|| line.operands.clone())
                 };
-                insn_row = insn_row.push(
-                    container(
-                        text(operands_display)
-                            .size(12)
-                            .color(text_color)
-                            .font(Font::MONOSPACE),
-                    )
-                    .width(Length::Fill),
-                );
+
+                // Make operands clickable if this instruction has a branch/call target
+                let has_nav_target = line.branch_target.is_some() && line.comment.is_some();
+                if has_nav_target {
+                    let target = line.branch_target.unwrap();
+                    insn_row = insn_row.push(
+                        container(
+                            button(
+                                text(operands_display)
+                                    .size(12)
+                                    .color(accent)
+                                    .font(Font::MONOSPACE),
+                            )
+                            .on_press(Message::DisasmNavigateToAddress(target))
+                            .padding(0)
+                            .style(move |_theme: &Theme, _status| button::Style {
+                                background: None,
+                                text_color: accent,
+                                ..Default::default()
+                            }),
+                        )
+                        .width(Length::Fill),
+                    );
+                } else {
+                    insn_row = insn_row.push(
+                        container(
+                            text(operands_display)
+                                .size(12)
+                                .color(text_color)
+                                .font(Font::MONOSPACE),
+                        )
+                        .width(Length::Fill),
+                    );
+                }
 
                 // Comment column: show raw when resolved, or nothing
                 if state.disasm_show_raw_comment {
@@ -297,7 +322,7 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                     );
                 }
 
-                rows = rows.push(container(insn_row).padding([1, 10]));
+                rows = rows.push(container(insn_row).padding([0, 10]));
             }
         }
     } else {

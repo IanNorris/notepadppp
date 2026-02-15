@@ -200,6 +200,7 @@ pub enum Message {
     DisasmToggleSymBrowser,
     DisasmSymFilterInput(String),
     DisasmGotoSymFromBrowser(u64),
+    DisasmNavigateToAddress(u64),
     DisasmToggleEditMode,
     DisasmEditHexInput(String),
     DisasmEditHexCommit(usize),
@@ -1927,7 +1928,6 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::DisasmToggleSymBrowser => {
             state.disasm_sym_browser = !state.disasm_sym_browser;
-            state.disasm_sym_filter.clear();
             Task::none()
         }
         Message::DisasmSymFilterInput(s) => {
@@ -1940,8 +1940,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     state.disasm_offset = off;
                 }
             }
-            state.disasm_sym_browser = false;
-            state.disasm_sym_filter.clear();
+            // Keep browser open so user can verify the function
+            Task::none()
+        }
+        Message::DisasmNavigateToAddress(addr) => {
+            if let Some(ref disasm) = state.disasm_state {
+                if let Some(off) = disasm.address_to_offset(addr) {
+                    state.disasm_offset = off;
+                }
+            }
             Task::none()
         }
         Message::DisasmToggleEditMode => {

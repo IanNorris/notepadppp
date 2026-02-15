@@ -239,25 +239,65 @@ impl Disassembler {
                     }
                 }
 
-                // Find .text section offset and use its data
-                let (text_bytes, base_address) = if let Some(text_sh) =
-                    elf.section_headers.iter().find(|sh| {
+                // Build virtual memory image from all LOAD segments
+                let mut virtual_size: u64 = 0;
+                let mut min_vaddr: u64 = u64::MAX;
+                for ph in &elf.program_headers {
+                    if ph.p_type == goblin::elf::program_header::PT_LOAD {
+                        let end = ph.p_vaddr + ph.p_memsz;
+                        if end > virtual_size {
+                            virtual_size = end;
+                        }
+                        if ph.p_vaddr < min_vaddr {
+                            min_vaddr = ph.p_vaddr;
+                        }
+                    }
+                }
+
+                if min_vaddr == u64::MAX {
+                    // Fallback: use .text section
+                    min_vaddr = elf.header.e_entry;
+                    if let Some(text_sh) = elf.section_headers.iter().find(|sh| {
                         elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("") == ".text"
                     }) {
-                    let start = text_sh.sh_offset as usize;
-                    let end = start + text_sh.sh_size as usize;
-                    if end <= data.len() {
-                        (data[start..end].to_vec(), text_sh.sh_addr)
-                    } else {
-                        (data.clone(), elf.header.e_entry)
+                        let start = text_sh.sh_offset as usize;
+                        let end = start + text_sh.sh_size as usize;
+                        if end <= data.len() {
+                            return Ok(Self {
+                                bytes: data[start..end].to_vec(),
+                                base_address: text_sh.sh_addr,
+                                arch,
+                                symbols,
+                            });
+                        }
                     }
-                } else {
-                    (data.to_vec(), elf.header.e_entry)
-                };
+                    return Ok(Self {
+                        bytes: data.to_vec(),
+                        base_address: min_vaddr,
+                        arch,
+                        symbols,
+                    });
+                }
+
+                let buf_size = (virtual_size - min_vaddr) as usize;
+                let mut virt_buf = vec![0u8; buf_size];
+                for ph in &elf.program_headers {
+                    if ph.p_type == goblin::elf::program_header::PT_LOAD {
+                        let file_off = ph.p_offset as usize;
+                        let file_size = ph.p_filesz as usize;
+                        let virt_off = (ph.p_vaddr - min_vaddr) as usize;
+                        if file_off + file_size <= data.len()
+                            && virt_off + file_size <= virt_buf.len()
+                        {
+                            virt_buf[virt_off..virt_off + file_size]
+                                .copy_from_slice(&data[file_off..file_off + file_size]);
+                        }
+                    }
+                }
 
                 Ok(Self {
-                    bytes: text_bytes,
-                    base_address,
+                    bytes: virt_buf,
+                    base_address: min_vaddr,
                     arch,
                     symbols,
                 })
@@ -295,29 +335,31 @@ impl Disassembler {
 
                 let entry = image_base + pe.entry as u64;
 
-                // Find .text section
-                let (text_bytes, base_address) =
-                    if let Some(text_sec) = pe.sections.iter().find(|s| {
-                        let name = String::from_utf8_lossy(&s.name);
-                        name.starts_with(".text")
-                    }) {
-                        let start = text_sec.pointer_to_raw_data as usize;
-                        let size = text_sec.size_of_raw_data as usize;
-                        if start + size <= data.len() {
-                            (
-                                data[start..start + size].to_vec(),
-                                image_base + text_sec.virtual_address as u64,
-                            )
-                        } else {
-                            (data.to_vec(), entry)
-                        }
-                    } else {
-                        (data.to_vec(), entry)
-                    };
+                // Load all sections into a virtual memory buffer so symbols
+                // outside .text are navigable
+                let mut virtual_size: u64 = 0;
+                for sec in &pe.sections {
+                    let end = sec.virtual_address as u64 + sec.virtual_size as u64;
+                    if end > virtual_size {
+                        virtual_size = end;
+                    }
+                }
+                let mut virt_buf = vec![0u8; virtual_size as usize];
+                for sec in &pe.sections {
+                    let file_off = sec.pointer_to_raw_data as usize;
+                    let file_size = sec.size_of_raw_data as usize;
+                    let virt_off = sec.virtual_address as usize;
+                    let copy_size = file_size.min(sec.virtual_size as usize);
+                    if file_off + copy_size <= data.len() && virt_off + copy_size <= virt_buf.len()
+                    {
+                        virt_buf[virt_off..virt_off + copy_size]
+                            .copy_from_slice(&data[file_off..file_off + copy_size]);
+                    }
+                }
 
                 Ok(Self {
-                    bytes: text_bytes,
-                    base_address,
+                    bytes: virt_buf,
+                    base_address: image_base,
                     arch,
                     symbols,
                 })
