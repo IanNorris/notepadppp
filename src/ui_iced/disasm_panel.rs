@@ -101,8 +101,8 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
             container(text("Address").size(11).color(text_dim).font(Font::MONOSPACE)).width(160),
             container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(180),
             container(text("Mnemonic").size(11).color(text_dim).font(Font::MONOSPACE)).width(80),
-            container(text("Operands").size(11).color(text_dim).font(Font::MONOSPACE)).width(Length::Fill),
-            container(text("Comment").size(11).color(text_dim).font(Font::MONOSPACE)).width(200),
+            container(text("Operands").size(11).color(text_dim).font(Font::MONOSPACE)).width(300),
+            container(text("Comment").size(11).color(text_dim).font(Font::MONOSPACE)).width(Length::Fill),
         ]
         .align_y(iced::Alignment::Center),
     )
@@ -181,11 +181,11 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                     container(text(operands_str)
                         .size(12)
                         .color(text_color)
-                        .font(Font::MONOSPACE)).width(Length::Fill),
+                        .font(Font::MONOSPACE)).width(300),
                     container(text(if comment_str.is_empty() { String::new() } else { format!("; {}", comment_str) })
                         .size(12)
-                        .color(accent)
-                        .font(Font::MONOSPACE)).width(200),
+                        .color(text_dim)
+                        .font(Font::MONOSPACE)).width(Length::Fill),
                 ]
                 .align_y(iced::Alignment::Center);
 

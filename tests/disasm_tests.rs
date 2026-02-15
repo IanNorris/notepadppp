@@ -314,13 +314,10 @@ fn test_find_symbol_prefers_exact_match() {
 #[test]
 fn test_call_target_resolved_to_symbol() {
     // call rel32 to address 0x1050 where we have a symbol "my_func"
-    // E8 xx xx xx xx encodes call with 32-bit relative offset
-    // At base 0x1000, offset 0: call to 0x1050 means rel32 = 0x1050 - (0x1000 + 5) = 0x4B
-    let mut bytes = vec![0x90; 0x60]; // pad with nops
+    let mut bytes = vec![0x90; 0x60];
     bytes[0] = 0xE8; // call rel32
     let rel: i32 = 0x1050_i64 as i32 - (0x1000 + 5);
     bytes[1..5].copy_from_slice(&rel.to_le_bytes());
-    // Put a ret at 0x50 so the "function" is there
     bytes[0x50] = 0xC3;
 
     let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
@@ -328,8 +325,12 @@ fn test_call_target_resolved_to_symbol() {
 
     let lines = disasm.disassemble_range(0, 5);
     assert_eq!(lines[0].mnemonic, "call");
-    assert!(lines[0].comment.is_some(), "call should have a comment with symbol name");
-    assert_eq!(lines[0].comment.as_deref(), Some("my_func"));
+    // Operands should show the symbol name
+    assert_eq!(lines[0].operands, "my_func");
+    // Comment should show the raw operand
+    assert!(lines[0].comment.is_some(), "should have raw operand as comment");
+    assert!(lines[0].comment.as_deref().unwrap().contains("0x1050"),
+        "comment should contain raw address, got: {:?}", lines[0].comment);
 }
 
 #[test]
@@ -346,18 +347,16 @@ fn test_call_target_with_offset() {
 
     let lines = disasm.disassemble_range(0, 5);
     assert_eq!(lines[0].mnemonic, "call");
+    // Operands should show symbol+offset
+    assert_eq!(lines[0].operands, "my_func+0x4");
+    // Comment should show raw address
     assert!(lines[0].comment.is_some());
-    assert_eq!(lines[0].comment.as_deref(), Some("my_func+0x4"));
 }
 
 #[test]
 fn test_rip_relative_lea_resolved() {
-    // LEA rax, [rip + disp32] - target should be resolved if symbol exists
-    // 48 8D 05 xx xx xx xx = lea rax, [rip + disp32]
-    // At address 0x1000, instruction size = 7 bytes
-    // target = 0x1000 + 7 + disp32
+    // LEA rax, [rip + disp32] → operands should show [my_data]
     let mut bytes = vec![0x90; 0x60];
-    // We want target = 0x1050, so disp32 = 0x1050 - 0x1007 = 0x49
     let disp: i32 = 0x1050_i64 as i32 - 0x1007;
     bytes[0] = 0x48;
     bytes[1] = 0x8D;
@@ -369,8 +368,13 @@ fn test_rip_relative_lea_resolved() {
 
     let lines = disasm.disassemble_range(0, 3);
     assert_eq!(lines[0].mnemonic, "lea");
-    assert!(lines[0].comment.is_some(), "RIP-relative lea should resolve to symbol: {:?}", lines[0]);
-    assert_eq!(lines[0].comment.as_deref(), Some("my_data"));
+    // Operands should have the symbol name substituted for [rip + ...]
+    assert!(lines[0].operands.contains("my_data"),
+        "operands should contain symbol name, got: {}", lines[0].operands);
+    // Comment should have the raw operand
+    assert!(lines[0].comment.is_some(), "should have raw operand as comment");
+    assert!(lines[0].comment.as_deref().unwrap().contains("rip"),
+        "comment should contain raw rip-relative, got: {:?}", lines[0].comment);
 }
 
 #[test]

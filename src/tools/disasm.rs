@@ -779,47 +779,80 @@ impl Disassembler {
         let operands_raw = insn.op_str().unwrap_or("").to_string();
         let mnemonic = insn.mnemonic().unwrap_or("").to_string();
 
-        // Resolve addresses in operands to symbolic names
-        let comment = self.resolve_operand_symbol(&mnemonic, &operands_raw, addr, insn_size);
+        // Resolve addresses in operands to symbolic names.
+        // The resolved form replaces the address with the symbol name in the operands field,
+        // and the raw operand goes to the comment.
+        let (operands, comment) =
+            self.resolve_operands(&mnemonic, &operands_raw, addr, insn_size);
 
         DisasmLine {
             address: addr,
             bytes: insn.bytes().to_vec(),
             mnemonic,
-            operands: operands_raw,
+            operands,
             comment,
             symbol,
             is_branch_target: branch_targets.contains(&addr),
         }
     }
 
-    /// Try to resolve addresses in operands to symbolic names.
-    fn resolve_operand_symbol(
+    /// Resolve addresses in operands to symbolic names.
+    /// Returns (resolved_operands, raw_comment).
+    /// When a symbol is found, the operands contain the symbolic form and
+    /// the comment contains the raw operand string.
+    fn resolve_operands(
         &self,
         mnemonic: &str,
         operands: &str,
         insn_addr: u64,
         insn_size: u64,
-    ) -> Option<String> {
+    ) -> (String, Option<String>) {
         // 1. Direct branch/call target: "call 0x140001234" or "jmp 0x140001234"
         if mnemonic.starts_with('j') || mnemonic == "call" || mnemonic.starts_with('b') {
             if let Some(target) = parse_hex_address(operands) {
-                return self.format_symbol_ref(target);
+                if let Some(sym_name) = self.format_symbol_ref(target) {
+                    return (sym_name, Some(operands.to_string()));
+                }
             }
         }
 
         // 2. RIP-relative addressing: [rip + 0x1234] or [rip - 0x1234]
         if let Some(target) = self.resolve_rip_relative(operands, insn_addr, insn_size) {
-            return self.format_symbol_ref(target);
+            if let Some(sym_name) = self.format_symbol_ref(target) {
+                // Replace the [rip + ...] portion with [sym_name]
+                let resolved = self.substitute_rip_with_symbol(operands, &sym_name);
+                return (resolved, Some(operands.to_string()));
+            }
         }
 
-        // 3. Absolute address in operands: mov rax, 0x140001234 or mov rax, qword ptr [0x140008000]
-        // Look for bare hex addresses that could be symbol references
-        if let Some(target) = self.find_absolute_address(operands) {
-            return self.format_symbol_ref(target);
+        // 3. Absolute address in operands
+        if let Some((target, addr_str)) = self.find_absolute_address_with_text(operands) {
+            if let Some(sym_name) = self.format_symbol_ref(target) {
+                let resolved = operands.replace(&addr_str, &sym_name);
+                return (resolved, Some(operands.to_string()));
+            }
         }
 
-        None
+        // No resolution — operands unchanged, no comment
+        (operands.to_string(), None)
+    }
+
+    /// Replace [rip + 0x...] in operand string with [symbol_name].
+    fn substitute_rip_with_symbol(&self, operands: &str, sym_name: &str) -> String {
+        let lower = operands.to_lowercase();
+        if let Some(rip_pos) = lower.find("rip") {
+            if let Some(bracket_start) = lower[..rip_pos].rfind('[') {
+                if let Some(bracket_end_rel) = lower[rip_pos..].find(']') {
+                    let bracket_end = rip_pos + bracket_end_rel;
+                    let mut result = String::new();
+                    result.push_str(&operands[..bracket_start + 1]);
+                    result.push_str(sym_name);
+                    result.push_str(&operands[bracket_end..]);
+                    return result;
+                }
+            }
+        }
+        operands.to_string()
     }
 
     /// Parse RIP-relative addressing and compute the target address.
@@ -858,20 +891,36 @@ impl Disassembler {
     }
 
     /// Find a bare hex address in operands that might be a symbol reference.
-    fn find_absolute_address(&self, operands: &str) -> Option<u64> {
+    /// Returns the address and the original text matched.
+    fn find_absolute_address_with_text(&self, operands: &str) -> Option<(u64, String)> {
         // Match 0x followed by 8+ hex digits (likely an absolute address)
-        for part in operands.split(|c: char| !c.is_ascii_hexdigit() && c != 'x' && c != 'X') {
-            let part = part.trim();
-            if let Some(hex) = part.strip_prefix("0x").or_else(|| part.strip_prefix("0X")) {
-                if hex.len() >= 8 {
-                    if let Ok(addr) = u64::from_str_radix(hex, 16) {
+        // We need to find the exact substring to replace
+        let mut i = 0;
+        let bytes = operands.as_bytes();
+        while i + 10 <= bytes.len() {
+            if i + 2 <= bytes.len()
+                && bytes[i] == b'0'
+                && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
+            {
+                let start = i;
+                i += 2;
+                let hex_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                let hex_len = i - hex_start;
+                if hex_len >= 8 {
+                    let hex_str = &operands[hex_start..i];
+                    if let Ok(addr) = u64::from_str_radix(hex_str, 16) {
                         if self.symbol_at_address(addr).is_some()
                             || self.nearest_symbol_before(addr).is_some()
                         {
-                            return Some(addr);
+                            return Some((addr, operands[start..i].to_string()));
                         }
                     }
                 }
+            } else {
+                i += 1;
             }
         }
         None
