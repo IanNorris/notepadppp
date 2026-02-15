@@ -156,6 +156,13 @@ pub enum Message {
     CompareFiles,
     ToggleHexViewer,
 
+    // Split pane
+    SplitEditorAction(text_editor::Action),
+    SplitNewTab,
+    SplitSelectTab(usize),
+    SplitCloseTab(usize),
+    SetActivePane(usize),
+
     // Macro
     ToggleMacroRecording,
     PlayLastMacro,
@@ -325,7 +332,11 @@ pub struct NotepadIced {
 
     // Split view
     pub split_mode: SplitMode,
-    pub split_tab_index: Option<usize>,
+    pub split_tab_manager: TabManager,
+    pub split_tab_contents: Vec<TabContent>,
+    pub split_font_size: f32,
+    pub split_file_extension: String,
+    pub active_pane: usize, // 0 = primary, 1 = secondary
 }
 
 impl Default for NotepadIced {
@@ -391,7 +402,11 @@ impl Default for NotepadIced {
             dragging_fif_panel: false,
             fif_drag_offset: (0.0, 0.0),
             split_mode: SplitMode::None,
-            split_tab_index: None,
+            split_tab_manager: TabManager::new(),
+            split_tab_contents: vec![TabContent::new()],
+            split_font_size: 14.0,
+            split_file_extension: String::new(),
+            active_pane: 0,
         }
     }
 }
@@ -431,6 +446,8 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::FifSearch | Message::FifSearchComplete(_) | Message::FifClickResult(_, _)
             | Message::CloseFindInFiles
             | Message::DragFifStart | Message::DragFifMove(_) | Message::DragFifEnd
+            | Message::SplitEditorAction(_) | Message::SplitNewTab | Message::SplitSelectTab(_)
+            | Message::SplitCloseTab(_) | Message::SetActivePane(_)
     );
     if should_close_menu {
         state.active_menu = None;
@@ -438,6 +455,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
     match message {
         Message::EditorAction(action) => {
+            state.active_pane = 0;
             if let Some(tc) = state
                 .tab_contents
                 .get_mut(state.tab_manager.active_index())
@@ -458,8 +476,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::NewTab => {
-            state.tab_manager.new_tab();
-            state.tab_contents.push(TabContent::new());
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_tab_manager.new_tab();
+                state.split_tab_contents.push(TabContent::new());
+            } else {
+                state.tab_manager.new_tab();
+                state.tab_contents.push(TabContent::new());
+            }
             Task::none()
         }
         Message::OpenFile => Task::perform(
@@ -1089,29 +1112,53 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::SplitHorizontal => {
             state.split_mode = SplitMode::Horizontal;
-            state.split_tab_index = Some(state.tab_manager.active_index());
+            state.split_tab_manager = TabManager::new();
+            state.split_tab_contents = vec![TabContent::new()];
+            state.split_font_size = state.font_size;
+            state.split_file_extension.clear();
+            state.active_pane = 1;
             Task::none()
         }
         Message::SplitVertical => {
             state.split_mode = SplitMode::Vertical;
-            state.split_tab_index = Some(state.tab_manager.active_index());
+            state.split_tab_manager = TabManager::new();
+            state.split_tab_contents = vec![TabContent::new()];
+            state.split_font_size = state.font_size;
+            state.split_file_extension.clear();
+            state.active_pane = 1;
             Task::none()
         }
         Message::RemoveSplit => {
             state.split_mode = SplitMode::None;
-            state.split_tab_index = None;
+            state.split_tab_manager = TabManager::new();
+            state.split_tab_contents = vec![TabContent::new()];
+            state.split_font_size = 14.0;
+            state.split_file_extension.clear();
+            state.active_pane = 0;
             Task::none()
         }
         Message::ZoomIn => {
-            state.font_size = (state.font_size + 2.0).min(72.0);
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_font_size = (state.split_font_size + 2.0).min(72.0);
+            } else {
+                state.font_size = (state.font_size + 2.0).min(72.0);
+            }
             Task::none()
         }
         Message::ZoomOut => {
-            state.font_size = (state.font_size - 2.0).max(6.0);
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_font_size = (state.split_font_size - 2.0).max(6.0);
+            } else {
+                state.font_size = (state.font_size - 2.0).max(6.0);
+            }
             Task::none()
         }
         Message::ZoomReset => {
-            state.font_size = 14.0;
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_font_size = 14.0;
+            } else {
+                state.font_size = 14.0;
+            }
             Task::none()
         }
         Message::ToggleFold => {
@@ -1766,6 +1813,79 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.dragging_fif_panel = false;
             Task::none()
         }
+
+        // ── Split pane ──
+        Message::SplitEditorAction(action) => {
+            state.active_pane = 1;
+            if let Some(tc) = state
+                .split_tab_contents
+                .get_mut(state.split_tab_manager.active_index())
+            {
+                tc.content.perform(action);
+                let new_text = tc.content.text();
+                let doc = state.split_tab_manager.active_document_mut();
+                let old_text = doc.buffer.text();
+                if new_text != old_text {
+                    let len = doc.buffer.len_bytes();
+                    if len > 0 {
+                        doc.buffer.delete(0, len);
+                    }
+                    doc.buffer.insert(0, &new_text);
+                }
+            }
+            Task::none()
+        }
+        Message::SplitNewTab => {
+            state.active_pane = 1;
+            state.split_tab_manager.new_tab();
+            state.split_tab_contents.push(TabContent::new());
+            Task::none()
+        }
+        Message::SplitSelectTab(idx) => {
+            state.active_pane = 1;
+            if idx < state.split_tab_manager.tab_count() {
+                state.split_tab_manager.set_active(idx);
+                if let Some(path) = &state.split_tab_manager.active_document().path {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        state.split_file_extension = ext.to_lowercase();
+                    } else {
+                        state.split_file_extension.clear();
+                    }
+                } else {
+                    state.split_file_extension.clear();
+                }
+            }
+            Task::none()
+        }
+        Message::SplitCloseTab(idx) => {
+            state.active_pane = 1;
+            let actual_idx = if idx == usize::MAX {
+                state.split_tab_manager.active_index()
+            } else {
+                idx
+            };
+            if actual_idx < state.split_tab_contents.len() {
+                state.split_tab_contents.remove(actual_idx);
+                state.split_tab_manager.close_tab(actual_idx);
+                while state.split_tab_contents.len() < state.split_tab_manager.tab_count() {
+                    state.split_tab_contents.push(TabContent::new());
+                }
+            }
+            // If only the auto-created empty tab remains after closing, close the split
+            if state.split_tab_manager.tab_count() == 1 {
+                let doc = state.split_tab_manager.active_document();
+                let is_empty = doc.buffer.text().trim().is_empty() && doc.path.is_none();
+                if is_empty {
+                    state.split_mode = SplitMode::None;
+                    state.active_pane = 0;
+                }
+            }
+            Task::none()
+        }
+        Message::SetActivePane(pane) => {
+            state.active_pane = pane;
+            Task::none()
+        }
     }
 }
 
@@ -1782,6 +1902,11 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         // Normal editor, possibly with side panels
         let editor = view_editor(state);
 
+        // Wrap primary editor in mouse_area for active pane tracking
+        let primary_pane: Element<'_, Message> = mouse_area(editor)
+            .on_press(Message::SetActivePane(0))
+            .into();
+
         // Wrap editor with split view if active
         let editor_area = if state.split_mode != SplitMode::None {
             let split_pane = view_split_pane(state);
@@ -1797,7 +1922,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             match state.split_mode {
                 SplitMode::Horizontal => {
                     row![
-                        container(editor).width(Length::FillPortion(1)).height(Length::Fill),
+                        container(primary_pane).width(Length::FillPortion(1)).height(Length::Fill),
                         divider,
                         container(split_pane).width(Length::FillPortion(1)).height(Length::Fill),
                     ]
@@ -1806,7 +1931,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                 }
                 SplitMode::Vertical => {
                     column![
-                        container(editor).width(Length::Fill).height(Length::FillPortion(1)),
+                        container(primary_pane).width(Length::Fill).height(Length::FillPortion(1)),
                         divider,
                         container(split_pane).width(Length::Fill).height(Length::FillPortion(1)),
                     ]
@@ -1817,7 +1942,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                 SplitMode::None => unreachable!(),
             }
         } else {
-            editor
+            primary_pane
         };
 
         if state.show_markdown_preview {
@@ -2172,6 +2297,7 @@ fn apply_text_transform(state: &mut NotepadIced, transform: impl FnOnce(&str) ->
 fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let count = state.tab_manager.tab_count();
     let active = state.tab_manager.active_index();
+    let is_active_pane = state.active_pane == 0;
 
     let mut tabs = row![].spacing(2).padding([2, 4]);
 
@@ -2210,10 +2336,36 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         tabs = tabs.push(tab);
     }
 
+    // "+" add-tab button
+    let add_btn = button(text("+").size(13))
+        .on_press(Message::NewTab)
+        .padding([2, 8])
+        .style(|_theme: &Theme, _status| button::Style {
+            background: None,
+            text_color: AppColors::TEXT_DIM,
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    tabs = tabs.push(add_btn);
+
+    let border_color = if is_active_pane {
+        AppColors::ACCENT
+    } else {
+        AppColors::TAB_BAR_BG
+    };
+
     container(tabs)
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
+        .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
+            border: iced::Border {
+                color: border_color,
+                width: if is_active_pane { 1.0 } else { 0.0 },
+                radius: 0.0.into(),
+            },
             ..Default::default()
         })
         .into()
@@ -2317,52 +2469,124 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     }
 }
 
-/// Read-only secondary pane for split view, showing syntax-highlighted content.
+/// Full editing secondary pane for split view with its own tab bar and editor.
 fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
-    let tab_idx = state.split_tab_index.unwrap_or(state.tab_manager.active_index());
+    let is_active_pane = state.active_pane == 1;
 
-    if let Some(tc) = state.tab_contents.get(tab_idx) {
-        let content_text = tc.content.text();
-        let lines: Vec<String> = content_text.lines().map(|l| l.to_string()).collect();
-        let gutter_width = 55.0;
+    // Tab bar for split pane
+    let count = state.split_tab_manager.tab_count();
+    let active = state.split_tab_manager.active_index();
 
-        let mut lines_col = column![].spacing(0);
+    let mut tabs = row![].spacing(2).padding([2, 4]);
+
+    for i in 0..count {
+        let tab_title = state.split_tab_manager.get_tab_title(i);
+        let is_active_tab = i == active;
+
+        let bg_color = if is_active_tab {
+            AppColors::TAB_ACTIVE_BG
+        } else {
+            AppColors::TAB_INACTIVE_BG
+        };
+
+        let label = text(tab_title).size(13);
+        let close = button(text("x").size(13))
+            .on_press(Message::SplitCloseTab(i))
+            .padding(2)
+            .style(|_theme: &Theme, _status| button::Style {
+                background: None,
+                text_color: AppColors::TEXT_DIM,
+                ..Default::default()
+            });
+
+        let tab = button(row![label, close].spacing(6).padding([2, 8]))
+            .on_press(Message::SplitSelectTab(i))
+            .style(move |_theme: &Theme, _status| button::Style {
+                background: Some(iced::Background::Color(bg_color)),
+                text_color: AppColors::TEXT,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
+        tabs = tabs.push(tab);
+    }
+
+    // "+" add-tab button
+    let add_btn = button(text("+").size(13))
+        .on_press(Message::SplitNewTab)
+        .padding([2, 8])
+        .style(|_theme: &Theme, _status| button::Style {
+            background: None,
+            text_color: AppColors::TEXT_DIM,
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    tabs = tabs.push(add_btn);
+
+    let border_color = if is_active_pane {
+        AppColors::ACCENT
+    } else {
+        AppColors::TAB_BAR_BG
+    };
+
+    let split_tab_bar: Element<'_, Message> = container(tabs)
+        .width(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
+            border: iced::Border {
+                color: border_color,
+                width: if is_active_pane { 1.0 } else { 0.0 },
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into();
+
+    // Editor for split pane
+    let split_editor: Element<'_, Message> = if let Some(tc) = state.split_tab_contents.get(active) {
+        let wrapping = if state.word_wrap {
+            Wrapping::Word
+        } else {
+            Wrapping::None
+        };
+
+        let editor_widget = text_editor(&tc.content)
+            .on_action(Message::SplitEditorAction)
+            .size(state.split_font_size)
+            .height(Length::Fill)
+            .wrapping(wrapping)
+            .highlight_with::<SyntectHighlighter>(
+                SyntectSettings {
+                    extension: state.split_file_extension.clone(),
+                    theme: "base16-ocean.dark".to_string(),
+                },
+                |highlight, _theme| highlight.to_format(),
+            );
 
         if state.show_line_numbers {
-            let mut gutter_col = column![].spacing(0);
-            for (i, line) in lines.iter().enumerate() {
-                gutter_col = gutter_col.push(
-                    container(
-                        text(format!("{}", i + 1))
-                            .size(state.font_size)
-                            .color(AppColors::TEXT_DIM),
-                    )
+            let content_text = tc.content.text();
+            let line_count = content_text.lines().count().max(1);
+            let gutter_width = 55.0;
+
+            let mut gutter_col = column![];
+            for i in 1..=line_count {
+                let line_label = text(format!("    {}", i))
+                    .size(state.split_font_size)
+                    .color(AppColors::TEXT_DIM);
+
+                let line_widget: Element<'_, Message> = container(line_label)
                     .width(Length::Fixed(gutter_width))
                     .align_x(iced::alignment::Horizontal::Right)
-                    .padding([0, 4]),
-                );
-                lines_col = lines_col.push(
-                    text(if line.is_empty() { String::from(" ") } else { line.clone() })
-                        .size(state.font_size)
-                        .color(AppColors::TEXT)
-                        .font(iced::Font::MONOSPACE),
-                );
-            }
-            if lines.is_empty() {
-                gutter_col = gutter_col.push(
-                    container(
-                        text("1").size(state.font_size).color(AppColors::TEXT_DIM),
-                    )
-                    .width(Length::Fixed(gutter_width))
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .padding([0, 4]),
-                );
-                lines_col = lines_col.push(
-                    text(" ")
-                        .size(state.font_size)
-                        .color(AppColors::TEXT)
-                        .font(iced::Font::MONOSPACE),
-                );
+                    .padding([0, 4])
+                    .into();
+
+                gutter_col = gutter_col.push(line_widget);
             }
 
             let gutter = container(scrollable(gutter_col))
@@ -2372,11 +2596,9 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                     ..Default::default()
                 });
 
-            let text_area = container(scrollable(lines_col))
-                .width(Length::Fill)
-                .height(Length::Fill);
+            let editor_row = row![gutter, editor_widget].height(Length::Fill);
 
-            container(row![gutter, text_area].height(Length::Fill))
+            container(editor_row)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme: &Theme| container::Style {
@@ -2385,24 +2607,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 })
                 .into()
         } else {
-            for line in &lines {
-                lines_col = lines_col.push(
-                    text(if line.is_empty() { String::from(" ") } else { line.clone() })
-                        .size(state.font_size)
-                        .color(AppColors::TEXT)
-                        .font(iced::Font::MONOSPACE),
-                );
-            }
-            if lines.is_empty() {
-                lines_col = lines_col.push(
-                    text(" ")
-                        .size(state.font_size)
-                        .color(AppColors::TEXT)
-                        .font(iced::Font::MONOSPACE),
-                );
-            }
-
-            container(scrollable(lines_col))
+            container(editor_widget)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme: &Theme| container::Style {
@@ -2412,11 +2617,40 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 .into()
         }
     } else {
-        container(text("No document"))
+        container(text("No document open"))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
-    }
+    };
+
+    // Status bar for split pane
+    let (line, col) = state
+        .split_tab_contents
+        .get(active)
+        .map(|tc| {
+            let (l, c) = tc.content.cursor_position();
+            (l + 1, c + 1)
+        })
+        .unwrap_or((1, 1));
+
+    let split_status: Element<'_, Message> = container(
+        text(format!("  Ln {}, Col {}", line, col)).size(12),
+    )
+    .width(Length::Fill)
+    .padding([2, 8])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(AppColors::STATUS_BAR_BG)),
+        ..Default::default()
+    })
+    .into();
+
+    let pane_content = column![split_tab_bar, split_editor, split_status]
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    mouse_area(pane_content)
+        .on_press(Message::SetActivePane(1))
+        .into()
 }
 
 fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
