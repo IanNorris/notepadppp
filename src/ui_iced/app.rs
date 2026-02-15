@@ -719,6 +719,15 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
                 } else {
                     state.tab_contents.push(TabContent::with_text(&buf_text));
                 }
+                // Auto-activate disassembler for binary files
+                if is_binary {
+                    if let Some(ref p) = state.tab_manager.active_document().path {
+                        if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
+                            state.disasm_state = Some(disasm);
+                            state.show_disasm = true;
+                        }
+                    }
+                }
                 opened_any = true;
             }
             Err(e) => {
@@ -843,8 +852,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 match handle {
                     Some(h) => {
                         let path = h.path().to_path_buf();
-                        match std::fs::read_to_string(&path) {
-                            Ok(content) => Ok((content, path)),
+                        match std::fs::read(&path) {
+                            Ok(bytes) => {
+                                let content = String::from_utf8_lossy(&bytes).to_string();
+                                Ok((content, path))
+                            }
                             Err(e) => Err(e.to_string()),
                         }
                     }
@@ -869,6 +881,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                             state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
                         } else {
                             state.tab_contents.push(TabContent::with_text(&buf_text));
+                        }
+                        // Auto-activate disassembler for binary files
+                        if is_binary {
+                            if let Some(ref p) = state.tab_manager.active_document().path {
+                                if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
+                                    state.disasm_state = Some(disasm);
+                                    state.show_disasm = true;
+                                }
+                            }
                         }
                     }
                     Err(_) => {
