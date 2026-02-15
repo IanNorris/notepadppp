@@ -98,9 +98,9 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
     // Column header
     let col_header = container(
         row![
-            text("Address         ").size(11).color(text_dim).font(Font::MONOSPACE),
-            text("Bytes                ").size(11).color(text_dim).font(Font::MONOSPACE),
-            text("Mnemonic  ").size(11).color(text_dim).font(Font::MONOSPACE),
+            container(text("Address").size(11).color(text_dim).font(Font::MONOSPACE)).width(160),
+            container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(180),
+            container(text("Mnemonic").size(11).color(text_dim).font(Font::MONOSPACE)).width(80),
             text("Operands").size(11).color(text_dim).font(Font::MONOSPACE),
         ]
         .align_y(iced::Alignment::Center),
@@ -164,19 +164,18 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 let operands_str = line.operands.clone();
 
                 let insn_row = row![
-                    text(addr_str)
+                    container(text(addr_str)
                         .size(12)
                         .color(addr_color)
-                        .font(Font::MONOSPACE),
-                    Space::with_width(2),
-                    text(bytes_padded)
+                        .font(Font::MONOSPACE)).width(160),
+                    container(text(bytes_padded)
                         .size(12)
                         .color(text_dim)
-                        .font(Font::MONOSPACE),
-                    text(mnemonic_padded)
+                        .font(Font::MONOSPACE)).width(180),
+                    container(text(mnemonic_padded)
                         .size(12)
                         .color(text_color)
-                        .font(Font::MONOSPACE),
+                        .font(Font::MONOSPACE)).width(80),
                     text(operands_str)
                         .size(12)
                         .color(text_color)
