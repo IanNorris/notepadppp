@@ -12,4 +12,5 @@ impl AppColors {
     pub const TEXT_DIM: Color = Color::from_rgb(0.55, 0.55, 0.55);
     pub const ACCENT: Color = Color::from_rgb(0.0, 0.47, 0.84);
     pub const CLOSE_HOVER: Color = Color::from_rgb(0.9, 0.2, 0.2);
+    pub const BORDER: Color = Color::from_rgb(0.3, 0.3, 0.35);
 }

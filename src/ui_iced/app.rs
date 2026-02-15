@@ -14,6 +14,13 @@ use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
 use super::theme::AppColors;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SplitMode {
+    None,
+    Horizontal, // side by side
+    Vertical,   // top/bottom
+}
+
 /// Per-tab state that pairs an iced text_editor::Content with our Document index.
 pub struct TabContent {
     pub content: text_editor::Content,
@@ -290,6 +297,10 @@ pub struct NotepadIced {
     pub fif_panel_pos: Option<(f32, f32)>,
     pub dragging_fif_panel: bool,
     pub fif_drag_offset: (f32, f32),
+
+    // Split view
+    pub split_mode: SplitMode,
+    pub split_tab_index: Option<usize>,
 }
 
 impl Default for NotepadIced {
@@ -345,6 +356,8 @@ impl Default for NotepadIced {
             fif_panel_pos: None,
             dragging_fif_panel: false,
             fif_drag_offset: (0.0, 0.0),
+            split_mode: SplitMode::None,
+            split_tab_index: None,
         }
     }
 }
@@ -1027,15 +1040,18 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SplitHorizontal => {
-            log::info!("Split horizontal");
+            state.split_mode = SplitMode::Horizontal;
+            state.split_tab_index = Some(state.tab_manager.active_index());
             Task::none()
         }
         Message::SplitVertical => {
-            log::info!("Split vertical");
+            state.split_mode = SplitMode::Vertical;
+            state.split_tab_index = Some(state.tab_manager.active_index());
             Task::none()
         }
         Message::RemoveSplit => {
-            log::info!("Remove split");
+            state.split_mode = SplitMode::None;
+            state.split_tab_index = None;
             Task::none()
         }
         Message::ZoomIn => {
@@ -1643,22 +1659,60 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         // Normal editor, possibly with side panels
         let editor = view_editor(state);
 
+        // Wrap editor with split view if active
+        let editor_area = if state.split_mode != SplitMode::None {
+            let split_pane = view_split_pane(state);
+            let divider = container(Space::new(
+                if state.split_mode == SplitMode::Horizontal { Length::Fixed(2.0) } else { Length::Fill },
+                if state.split_mode == SplitMode::Vertical { Length::Fixed(2.0) } else { Length::Fill },
+            ))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(AppColors::BORDER)),
+                ..Default::default()
+            });
+
+            match state.split_mode {
+                SplitMode::Horizontal => {
+                    row![
+                        container(editor).width(Length::FillPortion(1)).height(Length::Fill),
+                        divider,
+                        container(split_pane).width(Length::FillPortion(1)).height(Length::Fill),
+                    ]
+                    .height(Length::Fill)
+                    .into()
+                }
+                SplitMode::Vertical => {
+                    column![
+                        container(editor).width(Length::Fill).height(Length::FillPortion(1)),
+                        divider,
+                        container(split_pane).width(Length::Fill).height(Length::FillPortion(1)),
+                    ]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+                }
+                SplitMode::None => unreachable!(),
+            }
+        } else {
+            editor
+        };
+
         if state.show_markdown_preview {
             row![
-                container(editor).width(Length::FillPortion(1)),
+                container(editor_area).width(Length::FillPortion(1)),
                 super::markdown_panel::view_markdown_preview(state),
             ]
             .height(Length::Fill)
             .into()
         } else if state.show_function_list {
             row![
-                container(editor).width(Length::Fill),
+                container(editor_area).width(Length::Fill),
                 super::function_list_panel::view_function_list(state),
             ]
             .height(Length::Fill)
             .into()
         } else {
-            editor
+            editor_area
         }
     };
 
@@ -2104,6 +2158,108 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         }
     } else {
         container(text("No document open"))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+}
+
+/// Read-only secondary pane for split view, showing syntax-highlighted content.
+fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
+    let tab_idx = state.split_tab_index.unwrap_or(state.tab_manager.active_index());
+
+    if let Some(tc) = state.tab_contents.get(tab_idx) {
+        let content_text = tc.content.text();
+        let lines: Vec<String> = content_text.lines().map(|l| l.to_string()).collect();
+        let gutter_width = 55.0;
+
+        let mut lines_col = column![].spacing(0);
+
+        if state.show_line_numbers {
+            let mut gutter_col = column![].spacing(0);
+            for (i, line) in lines.iter().enumerate() {
+                gutter_col = gutter_col.push(
+                    container(
+                        text(format!("{}", i + 1))
+                            .size(state.font_size)
+                            .color(AppColors::TEXT_DIM),
+                    )
+                    .width(Length::Fixed(gutter_width))
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .padding([0, 4]),
+                );
+                lines_col = lines_col.push(
+                    text(if line.is_empty() { String::from(" ") } else { line.clone() })
+                        .size(state.font_size)
+                        .color(AppColors::TEXT)
+                        .font(iced::Font::MONOSPACE),
+                );
+            }
+            if lines.is_empty() {
+                gutter_col = gutter_col.push(
+                    container(
+                        text("1").size(state.font_size).color(AppColors::TEXT_DIM),
+                    )
+                    .width(Length::Fixed(gutter_width))
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .padding([0, 4]),
+                );
+                lines_col = lines_col.push(
+                    text(" ")
+                        .size(state.font_size)
+                        .color(AppColors::TEXT)
+                        .font(iced::Font::MONOSPACE),
+                );
+            }
+
+            let gutter = container(scrollable(gutter_col))
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                });
+
+            let text_area = container(scrollable(lines_col))
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+            container(row![gutter, text_area].height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            for line in &lines {
+                lines_col = lines_col.push(
+                    text(if line.is_empty() { String::from(" ") } else { line.clone() })
+                        .size(state.font_size)
+                        .color(AppColors::TEXT)
+                        .font(iced::Font::MONOSPACE),
+                );
+            }
+            if lines.is_empty() {
+                lines_col = lines_col.push(
+                    text(" ")
+                        .size(state.font_size)
+                        .color(AppColors::TEXT)
+                        .font(iced::Font::MONOSPACE),
+                );
+            }
+
+            container(scrollable(lines_col))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                })
+                .into()
+        }
+    } else {
+        container(text("No document"))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
