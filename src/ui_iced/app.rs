@@ -1260,7 +1260,6 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.tab_manager.active_document_mut().cursor.position.line = line;
                 state.tab_manager.active_document_mut().cursor.position.col = 0;
             }
-            }
             Task::none()
         }
         Message::CsvSortColumn(col) => {
