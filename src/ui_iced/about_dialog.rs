@@ -50,12 +50,18 @@ pub fn view_about_dialog<'a>(theme: &AppTheme) -> Element<'a, Message> {
 
     container(content)
         .width(Length::Fixed(320.0))
+        .align_x(iced::alignment::Horizontal::Center)
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(t_dialog_bg)),
             border: iced::Border {
                 color: t_border,
                 width: 1.0,
-                radius: 0.0.into(),
+                radius: 4.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
             },
             ..Default::default()
         })

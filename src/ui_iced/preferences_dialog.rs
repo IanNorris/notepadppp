@@ -1,4 +1,4 @@
-use iced::widget::{button, checkbox, column, container, row, text, text_input, Space};
+use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
@@ -145,32 +145,18 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
         .size(13)
         .width(Length::Fixed(60.0));
 
-    // Theme selector: list of buttons
+    // Theme selector: pick_list dropdown
     let available = AppColors::available_themes();
-    let mut theme_buttons = row![].spacing(4);
-    for t in &available {
-        let name = t.name.clone();
-        let is_selected = state.pref_theme == name;
-        let btn_bg = if is_selected { t_accent } else { t_button_bg };
-        let name_clone = name.clone();
-        theme_buttons = theme_buttons.push(
-            button(text(name).size(11))
-                .on_press(Message::PrefSetTheme(name_clone))
-                .padding([3, 8])
-                .style(move |_t: &Theme, s| {
-                    let bg = match s {
-                        button::Status::Hovered | button::Status::Pressed => t_accent,
-                        _ => btn_bg,
-                    };
-                    button::Style {
-                        background: Some(iced::Background::Color(bg)),
-                        text_color: t_text,
-                        border: iced::Border { radius: 3.0.into(), ..Default::default() },
-                        ..Default::default()
-                    }
-                }),
-        );
-    }
+    let theme_names: Vec<String> = available.iter().map(|t| t.name.clone()).collect();
+    let selected_theme = Some(state.pref_theme.clone());
+    let theme_picker: Element<'a, Message> = pick_list(
+        theme_names,
+        selected_theme,
+        Message::PrefSetTheme,
+    )
+    .text_size(13)
+    .width(Length::Fixed(200.0))
+    .into();
 
     // Checkboxes
     let auto_save = checkbox("Auto Save", state.pref_auto_save)
@@ -205,7 +191,7 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
         Space::with_height(8),
         setting_row("Font Size", font_size_control.into(), theme),
         setting_row("Tab Size", tab_size_control.into(), theme),
-        setting_row("Theme", theme_buttons.into(), theme),
+        setting_row("Theme", theme_picker, theme),
         Space::with_height(4),
         auto_save,
         word_wrap,

@@ -169,6 +169,14 @@ pub enum Message {
     MoveTabToSplit(usize),
     MoveTabFromSplit(usize),
 
+    // Tab context menu
+    TabContextMenu(usize, bool), // (tab_index, is_split_pane)
+    TabContextClose(usize, bool),
+    TabContextCloseOthers(usize, bool),
+    TabContextCloseAll(bool),
+    TabContextMoveToOtherPane(usize, bool),
+    CloseTabContextMenu,
+
     // Macro
     ToggleMacroRecording,
     PlayLastMacro,
@@ -350,6 +358,9 @@ pub struct NotepadIced {
 
     // Theme
     pub theme: AppTheme,
+
+    // Tab context menu: (tab_index, is_split_pane)
+    pub tab_context_menu: Option<(usize, bool)>,
 }
 
 impl Default for NotepadIced {
@@ -427,6 +438,7 @@ impl Default for NotepadIced {
             split_show_markdown_preview: false,
             active_pane: 0,
             theme,
+            tab_context_menu: None,
         }
     }
 }
@@ -470,6 +482,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::SplitCloseTab(_) | Message::SetActivePane(_)
             | Message::NewTabInActivePane | Message::FileDropped(_)
             | Message::MoveTabToSplit(_) | Message::MoveTabFromSplit(_)
+            | Message::TabContextMenu(_, _) | Message::TabContextClose(_, _)
+            | Message::TabContextCloseOthers(_, _) | Message::TabContextCloseAll(_)
+            | Message::TabContextMoveToOtherPane(_, _) | Message::CloseTabContextMenu
     );
     if should_close_menu {
         state.active_menu = None;
@@ -1133,21 +1148,31 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SplitHorizontal => {
-            state.split_mode = SplitMode::Horizontal;
-            state.split_tab_manager = TabManager::new();
-            state.split_tab_contents = vec![TabContent::new()];
-            state.split_font_size = state.font_size;
-            state.split_file_extension.clear();
-            state.active_pane = 1;
+            if state.split_mode == SplitMode::Vertical {
+                // Switch from vertical to horizontal, keep existing split state
+                state.split_mode = SplitMode::Horizontal;
+            } else if state.split_mode == SplitMode::None {
+                state.split_mode = SplitMode::Horizontal;
+                state.split_tab_manager = TabManager::new();
+                state.split_tab_contents = vec![TabContent::new()];
+                state.split_font_size = state.font_size;
+                state.split_file_extension.clear();
+                state.active_pane = 1;
+            }
             Task::none()
         }
         Message::SplitVertical => {
-            state.split_mode = SplitMode::Vertical;
-            state.split_tab_manager = TabManager::new();
-            state.split_tab_contents = vec![TabContent::new()];
-            state.split_font_size = state.font_size;
-            state.split_file_extension.clear();
-            state.active_pane = 1;
+            if state.split_mode == SplitMode::Horizontal {
+                // Switch from horizontal to vertical, keep existing split state
+                state.split_mode = SplitMode::Vertical;
+            } else if state.split_mode == SplitMode::None {
+                state.split_mode = SplitMode::Vertical;
+                state.split_tab_manager = TabManager::new();
+                state.split_tab_contents = vec![TabContent::new()];
+                state.split_font_size = state.font_size;
+                state.split_file_extension.clear();
+                state.active_pane = 1;
+            }
             Task::none()
         }
         Message::RemoveSplit => {
@@ -1452,7 +1477,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::PrefSetTheme(name) => {
-            state.pref_theme = name;
+            state.pref_theme = name.clone();
+            // Immediately apply the theme
+            state.theme = AppColors::theme_by_name(&name);
             Task::none()
         }
         Message::PrefToggleAutoSave(v) => {
@@ -1784,7 +1811,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Keyboard ──
         Message::EscapePressed => {
-            if state.show_find {
+            if state.tab_context_menu.is_some() {
+                state.tab_context_menu = None;
+            } else if state.show_find {
                 state.show_find = false;
                 state.show_replace = false;
                 state.search_matches.clear();
@@ -2044,12 +2073,104 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+
+        // ── Tab context menu ──
+        Message::TabContextMenu(idx, is_split) => {
+            state.tab_context_menu = Some((idx, is_split));
+            Task::none()
+        }
+        Message::CloseTabContextMenu => {
+            state.tab_context_menu = None;
+            Task::none()
+        }
+        Message::TabContextClose(idx, is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                return update(state, Message::SplitCloseTab(idx));
+            } else {
+                return update(state, Message::CloseTab(idx));
+            }
+        }
+        Message::TabContextCloseOthers(idx, is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                // Close all split tabs except idx
+                let mut i = state.split_tab_manager.tab_count();
+                while i > 0 {
+                    i -= 1;
+                    if i != idx && i < state.split_tab_contents.len() {
+                        state.split_tab_contents.remove(i);
+                        state.split_tab_manager.close_tab(i);
+                    }
+                }
+                while state.split_tab_contents.len() < state.split_tab_manager.tab_count() {
+                    state.split_tab_contents.push(TabContent::new());
+                }
+            } else {
+                let mut i = state.tab_manager.tab_count();
+                while i > 0 {
+                    i -= 1;
+                    if i != idx && i < state.tab_contents.len() {
+                        state.tab_contents.remove(i);
+                        state.tab_manager.close_tab(i);
+                    }
+                }
+                while state.tab_contents.len() < state.tab_manager.tab_count() {
+                    state.tab_contents.push(TabContent::new());
+                }
+            }
+            Task::none()
+        }
+        Message::TabContextCloseAll(is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                state.split_tab_manager.close_all();
+                state.split_tab_contents.clear();
+                state.split_tab_contents.push(TabContent::new());
+                // Close the split entirely
+                state.split_mode = SplitMode::None;
+                state.active_pane = 0;
+            } else {
+                state.tab_manager.close_all();
+                state.tab_contents.clear();
+                state.tab_contents.push(TabContent::new());
+            }
+            Task::none()
+        }
+        Message::TabContextMoveToOtherPane(idx, is_split) => {
+            state.tab_context_menu = None;
+            if is_split {
+                return update(state, Message::MoveTabFromSplit(idx));
+            } else {
+                return update(state, Message::MoveTabToSplit(idx));
+            }
+        }
     }
 }
 
 pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let menu_bar = menu_bar::view_menu_bar(&state.active_menu, &state.theme);
-    let tab_bar = view_tab_bar(state);
+
+    // Build tab bar row: if split is active, show both tab bars side by side
+    let tab_bar_area: Element<'_, Message> = if state.split_mode != SplitMode::None {
+        let primary_tab_bar = view_tab_bar(state);
+        let split_tab_bar = view_split_tab_bar(state);
+        match state.split_mode {
+            SplitMode::Horizontal => {
+                row![
+                    container(primary_tab_bar).width(Length::FillPortion(1)),
+                    container(split_tab_bar).width(Length::FillPortion(1)),
+                ]
+                .into()
+            }
+            SplitMode::Vertical => {
+                column![primary_tab_bar, split_tab_bar].into()
+            }
+            SplitMode::None => unreachable!(),
+        }
+    } else {
+        view_tab_bar(state)
+    };
 
     // Build the main content area based on active viewer panels
     let main_area: Element<'_, Message> = if state.show_csv_viewer {
@@ -2151,7 +2272,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         }
     };
 
-    let mut base_content = column![menu_bar, tab_bar, main_area];
+    let mut base_content = column![menu_bar, tab_bar_area, main_area];
 
     if state.show_status_bar {
         base_content = base_content.push(view_status_bar(state));
@@ -2165,8 +2286,9 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // Check if any overlay is needed
     let has_dropdown = state.active_menu.is_some();
     let has_floating = state.show_find || state.show_goto_line || state.show_about || state.show_find_in_files || state.show_preferences || state.show_keybindings;
+    let has_context_menu = state.tab_context_menu.is_some();
 
-    if !has_dropdown && !has_floating {
+    if !has_dropdown && !has_floating && !has_context_menu {
         return base;
     }
 
@@ -2344,6 +2466,136 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         .into();
 
         layers.push(kb_overlay);
+    }
+
+    // Tab context menu
+    if let Some((tab_idx, is_split)) = state.tab_context_menu {
+        // Click catcher to close menu
+        let click_catcher: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press(Message::CloseTabContextMenu)
+        .into();
+        layers.push(click_catcher);
+
+        let has_split_active = state.split_mode != SplitMode::None;
+        let t_menu_bg = state.theme.menu_bg;
+        let t_menu_hover = state.theme.menu_hover;
+        let t_text = state.theme.text;
+        let t_border = state.theme.border;
+
+        let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
+
+        if has_split_active {
+            let label = if is_split { "Move to Primary Pane" } else { "Move to Other Pane" };
+            menu_items.push(
+                button(text(label).size(13))
+                    .on_press(Message::TabContextMoveToOtherPane(tab_idx, is_split))
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(move |_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                            _ => None,
+                        };
+                        button::Style {
+                            background: bg,
+                            text_color: t_text,
+                            border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    })
+                    .into(),
+            );
+        }
+
+        menu_items.push(
+            button(text("Close").size(13))
+                .on_press(Message::TabContextClose(tab_idx, is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        menu_items.push(
+            button(text("Close Other Tabs").size(13))
+                .on_press(Message::TabContextCloseOthers(tab_idx, is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        menu_items.push(
+            button(text("Close All").size(13))
+                .on_press(Message::TabContextCloseAll(is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
+        let context_menu = container(
+            column(menu_items).spacing(0).padding(4).width(Length::Fixed(200.0)),
+        )
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_menu_bg)),
+            border: iced::Border {
+                color: t_border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                offset: iced::Vector::new(2.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+        let context_overlay: Element<'_, Message> = container(opaque(context_menu))
+            .padding(iced::Padding { top: 28.0, right: 0.0, bottom: 0.0, left: 100.0 })
+            .width(Length::Shrink)
+            .height(Length::Shrink)
+            .into();
+
+        layers.push(context_overlay);
     }
 
     stack(layers).into()
@@ -2528,7 +2780,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     let has_split = state.split_mode != SplitMode::None;
 
-    let mut tabs = row![].spacing(2).padding([2, 4]);
+    let mut tabs = row![].spacing(1).padding([1, 2]);
 
     for i in 0..count {
         let tab_title = state.tab_manager.get_tab_title(i);
@@ -2550,7 +2802,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let mut tab_row = row![label].spacing(6).padding([2, 8]);
+        let mut tab_row = row![label].spacing(6).padding([1, 6]);
         if has_split {
             let move_btn = button(text("→").size(11))
                 .on_press(Message::MoveTabToSplit(i))
@@ -2576,13 +2828,17 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        tabs = tabs.push(tab);
+        let tab_with_context: Element<'a, Message> = mouse_area(tab)
+            .on_right_press(Message::TabContextMenu(i, false))
+            .into();
+
+        tabs = tabs.push(tab_with_context);
     }
 
     // "+" add-tab button
     let add_btn = button(text("+").size(13))
         .on_press(Message::NewTab)
-        .padding([2, 8])
+        .padding([1, 6])
         .style(move |_theme: &Theme, _status| button::Style {
             background: None,
             text_color: t_text_dim,
@@ -2714,8 +2970,8 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     }
 }
 
-/// Full editing secondary pane for split view with its own tab bar and editor.
-fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
+/// Tab bar for split pane, rendered at the same level as the primary tab bar.
+fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let is_active_pane = state.active_pane == 1;
 
     let t_tab_active = state.theme.tab_active_bg;
@@ -2724,14 +2980,11 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let t_text_dim = state.theme.text_dim;
     let t_accent = state.theme.accent;
     let t_tab_bar = state.theme.tab_bar_bg;
-    let t_bg = state.theme.background;
-    let t_status = state.theme.status_bar_bg;
 
-    // Tab bar for split pane
     let count = state.split_tab_manager.tab_count();
     let active = state.split_tab_manager.active_index();
 
-    let mut tabs = row![].spacing(2).padding([2, 4]);
+    let mut tabs = row![].spacing(1).padding([1, 2]);
 
     for i in 0..count {
         let tab_title = state.split_tab_manager.get_tab_title(i);
@@ -2762,7 +3015,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab = button(row![label, move_btn, close].spacing(6).padding([2, 8]))
+        let tab = button(row![label, move_btn, close].spacing(6).padding([1, 6]))
             .on_press(Message::SplitSelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
@@ -2774,13 +3027,17 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        tabs = tabs.push(tab);
+        let tab_with_context: Element<'a, Message> = mouse_area(tab)
+            .on_right_press(Message::TabContextMenu(i, true))
+            .into();
+
+        tabs = tabs.push(tab_with_context);
     }
 
     // "+" add-tab button
     let add_btn = button(text("+").size(13))
         .on_press(Message::SplitNewTab)
-        .padding([2, 8])
+        .padding([1, 6])
         .style(move |_theme: &Theme, _status| button::Style {
             background: None,
             text_color: t_text_dim,
@@ -2798,7 +3055,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         t_tab_bar
     };
 
-    let split_tab_bar: Element<'_, Message> = container(tabs)
+    container(tabs)
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(t_tab_bar)),
@@ -2809,7 +3066,16 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             },
             ..Default::default()
         })
-        .into();
+        .into()
+}
+
+/// Full editing secondary pane for split view (editor + status only, tab bar rendered separately).
+fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
+    let t_text_dim = state.theme.text_dim;
+    let t_bg = state.theme.background;
+    let t_status = state.theme.status_bar_bg;
+
+    let active = state.split_tab_manager.active_index();
 
     // Editor for split pane
     let split_editor: Element<'_, Message> = if let Some(tc) = state.split_tab_contents.get(active) {
@@ -2907,7 +3173,7 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     })
     .into();
 
-    let pane_content = column![split_tab_bar, split_editor, split_status]
+    let pane_content = column![split_editor, split_status]
         .width(Length::Fill)
         .height(Length::Fill);
 

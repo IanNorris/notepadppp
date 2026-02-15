@@ -17,6 +17,21 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
         .map(|tc| tc.content.text())
         .unwrap_or_default();
 
+    if content_text.trim().is_empty() {
+        return container(
+            text("No CSV data to display").size(14).color(t_text_dim),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_background)),
+            ..Default::default()
+        })
+        .into();
+    }
+
     let csv_data = parse_csv(&content_text, ',', state.csv_has_headers);
 
     if csv_data.headers.is_empty() {

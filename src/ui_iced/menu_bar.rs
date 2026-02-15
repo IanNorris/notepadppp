@@ -71,8 +71,8 @@ pub fn menu_x_offset(menu_name: &str) -> f32 {
         if *label == menu_name {
             return offset;
         }
-        // Approximate width: ~8px per char + 20px padding
-        offset += (label.len() as f32) * 8.0 + 20.0;
+        // Approximate width: ~7.0px per char at 13px font + 20px button padding
+        offset += (label.len() as f32) * 7.0 + 20.0;
     }
     offset
 }
