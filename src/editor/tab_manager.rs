@@ -50,7 +50,7 @@ impl TabManager {
     pub fn open_file(&mut self, path: PathBuf) -> io::Result<usize> {
         let large_info = LargeFileInfo::from_path(&path)?;
 
-        let doc = if large_info.is_large {
+        let mut doc = if large_info.is_large {
             // Use streaming load via Rope::from_reader for large files
             let file = std::fs::File::open(&path)?;
             let buffer = TextBuffer::from_reader(file)?;
@@ -74,6 +74,15 @@ impl TabManager {
                 .with_line_ending(line_ending)
                 .with_large_file_info(large_info)
         };
+
+        // Auto-set read-only if file is not writable on disk
+        if let Some(ref p) = doc.path {
+            if let Ok(meta) = std::fs::metadata(p) {
+                if meta.permissions().readonly() {
+                    doc.read_only = true;
+                }
+            }
+        }
 
         self.tabs.push(doc);
         self.untitled_names.push(None);

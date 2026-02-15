@@ -78,3 +78,34 @@ fn test_read_only_with_modified_flag() {
     // Even in read-only, modified flag should still be queryable
     assert!(!doc.is_modified());
 }
+
+// --- Filesystem read-only detection ---
+
+#[test]
+fn test_open_readonly_file_sets_read_only() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("readonly.txt");
+    fs::write(&path, "cannot edit me").unwrap();
+    // Make file read-only
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+
+    let mut mgr = TabManager::new();
+    mgr.open_file(path.clone()).unwrap();
+    let doc = mgr.active_document();
+    assert!(doc.read_only, "File with read-only permissions should auto-set read_only");
+    assert_eq!(doc.buffer.text(), "cannot edit me");
+}
+
+#[test]
+fn test_open_writable_file_not_read_only() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("writable.txt");
+    fs::write(&path, "can edit me").unwrap();
+
+    let mut mgr = TabManager::new();
+    mgr.open_file(path).unwrap();
+    assert!(!mgr.active_document().read_only);
+}
