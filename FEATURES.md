@@ -31,7 +31,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [x] Reload from disk
 - [x] File status auto-detection (external modifications prompt)
 - [x] Auto-save / crash recovery
-- [ ] Open containing folder (in file manager / terminal)
+- [x] Open containing folder (in file manager / terminal)
 
 ### 1.4 Native Windows UI
 - [ ] Win32 native window (no web rendering)
