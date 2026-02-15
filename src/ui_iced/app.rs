@@ -2807,20 +2807,30 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         };
 
         let label = text(tab_title).size(13);
-        let close = button(text("x").size(13))
+        let close = button(text("x").size(11))
             .on_press(Message::CloseTab(i))
-            .padding(2)
-            .style(move |_theme: &Theme, _status| button::Style {
-                background: None,
-                text_color: t_text_dim,
-                ..Default::default()
+            .padding([0, 2])
+            .style(move |_theme: &Theme, status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_accent)),
+                    _ => None,
+                };
+                button::Style {
+                    background: bg,
+                    text_color: t_text_dim,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
             });
 
-        let mut tab_row = row![label].spacing(6).padding([1, 6]);
+        let mut tab_row = row![label].spacing(4).padding([2, 6]).align_y(iced::Alignment::Center);
         if has_split {
-            let move_btn = button(text("→").size(11))
+            let move_btn = button(text(">").size(11))
                 .on_press(Message::MoveTabToSplit(i))
-                .padding(2)
+                .padding([0, 2])
                 .style(move |_theme: &Theme, _status| button::Style {
                     background: None,
                     text_color: t_text_dim,
@@ -2850,35 +2860,33 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     }
 
     // "+" add-tab button
-    let add_btn = button(text("+").size(13))
+    let t_border = state.theme.border;
+    let t_button_bg = state.theme.button_bg;
+    let add_btn = button(text("+").size(14))
         .on_press(Message::NewTab)
-        .padding([1, 6])
-        .style(move |_theme: &Theme, _status| button::Style {
-            background: None,
-            text_color: t_text_dim,
-            border: iced::Border {
-                radius: 4.0.into(),
+        .padding([2, 8])
+        .style(move |_theme: &Theme, status| {
+            let bg = match status {
+                button::Status::Hovered | button::Status::Pressed => t_tab_active,
+                _ => t_button_bg,
+            };
+            button::Style {
+                background: Some(iced::Background::Color(bg)),
+                text_color: t_text_dim,
+                border: iced::Border {
+                    color: t_border,
+                    width: 1.0,
+                    radius: 3.0.into(),
+                },
                 ..Default::default()
-            },
-            ..Default::default()
+            }
         });
     tabs = tabs.push(add_btn);
-
-    let border_color = if is_active_pane {
-        t_accent
-    } else {
-        t_tab_bar
-    };
 
     container(tabs)
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(t_tab_bar)),
-            border: iced::Border {
-                color: border_color,
-                width: if is_active_pane { 1.0 } else { 0.0 },
-                radius: 0.0.into(),
-            },
             ..Default::default()
         })
         .into()
@@ -2986,8 +2994,6 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
 /// Tab bar for split pane, rendered at the same level as the primary tab bar.
 fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
-    let is_active_pane = state.active_pane == 1;
-
     let t_tab_active = state.theme.tab_active_bg;
     let t_tab_inactive = state.theme.tab_inactive_bg;
     let t_text = state.theme.text;
@@ -3011,25 +3017,35 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         };
 
         let label = text(tab_title).size(13);
-        let close = button(text("x").size(13))
+        let close = button(text("x").size(11))
             .on_press(Message::SplitCloseTab(i))
-            .padding(2)
-            .style(move |_theme: &Theme, _status| button::Style {
-                background: None,
-                text_color: t_text_dim,
-                ..Default::default()
+            .padding([0, 2])
+            .style(move |_theme: &Theme, status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_accent)),
+                    _ => None,
+                };
+                button::Style {
+                    background: bg,
+                    text_color: t_text_dim,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
             });
 
-        let move_btn = button(text("←").size(11))
+        let move_btn = button(text("<").size(11))
             .on_press(Message::MoveTabFromSplit(i))
-            .padding(2)
+            .padding([0, 2])
             .style(move |_theme: &Theme, _status| button::Style {
                 background: None,
                 text_color: t_text_dim,
                 ..Default::default()
             });
 
-        let tab = button(row![label, move_btn, close].spacing(6).padding([1, 6]))
+        let tab = button(row![label, move_btn, close].spacing(4).padding([2, 6]).align_y(iced::Alignment::Center))
             .on_press(Message::SplitSelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
@@ -3049,35 +3065,33 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     }
 
     // "+" add-tab button
-    let add_btn = button(text("+").size(13))
+    let t_border = state.theme.border;
+    let t_button_bg = state.theme.button_bg;
+    let add_btn = button(text("+").size(14))
         .on_press(Message::SplitNewTab)
-        .padding([1, 6])
-        .style(move |_theme: &Theme, _status| button::Style {
-            background: None,
-            text_color: t_text_dim,
-            border: iced::Border {
-                radius: 4.0.into(),
+        .padding([2, 8])
+        .style(move |_theme: &Theme, status| {
+            let bg = match status {
+                button::Status::Hovered | button::Status::Pressed => t_tab_active,
+                _ => t_button_bg,
+            };
+            button::Style {
+                background: Some(iced::Background::Color(bg)),
+                text_color: t_text_dim,
+                border: iced::Border {
+                    color: t_border,
+                    width: 1.0,
+                    radius: 3.0.into(),
+                },
                 ..Default::default()
-            },
-            ..Default::default()
+            }
         });
     tabs = tabs.push(add_btn);
-
-    let border_color = if is_active_pane {
-        t_accent
-    } else {
-        t_tab_bar
-    };
 
     container(tabs)
         .width(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(t_tab_bar)),
-            border: iced::Border {
-                color: border_color,
-                width: if is_active_pane { 1.0 } else { 0.0 },
-                radius: 0.0.into(),
-            },
             ..Default::default()
         })
         .into()
