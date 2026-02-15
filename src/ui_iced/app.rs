@@ -163,6 +163,17 @@ pub enum Message {
     // Settings
     ShowPreferences,
     ShowKeybindings,
+    SavePreferences,
+    CancelPreferences,
+    CloseKeybindingsDialog,
+    PrefFontSizeIncrease,
+    PrefFontSizeDecrease,
+    PrefTabSizeChanged(String),
+    PrefToggleTheme,
+    PrefToggleAutoSave(bool),
+    PrefToggleWordWrap(bool),
+    PrefToggleLineNumbers(bool),
+    PrefToggleWhitespace(bool),
 
     // Help
     ShowAbout,
@@ -265,6 +276,19 @@ pub struct NotepadIced {
     // About
     pub show_about: bool,
 
+    // Preferences dialog
+    pub show_preferences: bool,
+    pub pref_font_size: f32,
+    pub pref_tab_size: String,
+    pub pref_theme: String,
+    pub pref_auto_save: bool,
+    pub pref_word_wrap: bool,
+    pub pref_show_line_numbers: bool,
+    pub pref_show_whitespace: bool,
+
+    // Keybindings dialog
+    pub show_keybindings: bool,
+
     // Floating panel positions (None = default position)
     pub find_panel_pos: Option<(f32, f32)>,
     pub dragging_find_panel: bool,
@@ -335,6 +359,15 @@ impl Default for NotepadIced {
             show_goto_line: false,
             goto_line_input: String::new(),
             show_about: false,
+            show_preferences: false,
+            pref_font_size: 14.0,
+            pref_tab_size: String::from("4"),
+            pref_theme: String::from("base16-ocean.dark"),
+            pref_auto_save: false,
+            pref_word_wrap: false,
+            pref_show_line_numbers: true,
+            pref_show_whitespace: false,
+            show_keybindings: false,
             find_panel_pos: None, // None = right-aligned default
             dragging_find_panel: false,
             drag_offset: (0.0, 0.0),
@@ -383,6 +416,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::CloseSearch | Message::ClickSearchResult(_)
             | Message::GotoLineInputChanged(_) | Message::GotoLineConfirm | Message::GotoLineClose
             | Message::CloseAbout
+            | Message::SavePreferences | Message::CancelPreferences
+            | Message::PrefFontSizeIncrease | Message::PrefFontSizeDecrease
+            | Message::PrefTabSizeChanged(_) | Message::PrefToggleTheme
+            | Message::PrefToggleAutoSave(_) | Message::PrefToggleWordWrap(_)
+            | Message::PrefToggleLineNumbers(_) | Message::PrefToggleWhitespace(_)
+            | Message::CloseKeybindingsDialog
             | Message::SessionFileChosen(_) | Message::ExportSaved(_) | Message::CompareFileLoaded(_)
             | Message::EscapePressed
             | Message::DragFindStart | Message::DragFindMove(_) | Message::DragFindEnd
@@ -1274,11 +1313,91 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Settings ──
         Message::ShowPreferences => {
-            log::info!("Show preferences");
+            // Load current settings into pref fields
+            let settings = crate::io::settings::AppSettings::load(
+                &crate::io::settings::AppSettings::settings_path(),
+            )
+            .unwrap_or_default();
+            state.pref_font_size = settings.font_size;
+            state.pref_tab_size = settings.tab_size.to_string();
+            state.pref_theme = settings.theme.clone();
+            state.pref_auto_save = settings.auto_save;
+            state.pref_word_wrap = settings.word_wrap;
+            state.pref_show_line_numbers = settings.show_line_numbers;
+            state.pref_show_whitespace = settings.show_whitespace;
+            state.show_preferences = true;
             Task::none()
         }
         Message::ShowKeybindings => {
-            log::info!("Show keybindings");
+            state.show_keybindings = true;
+            Task::none()
+        }
+        Message::SavePreferences => {
+            // Build settings from pref fields and save
+            let mut settings = crate::io::settings::AppSettings::load(
+                &crate::io::settings::AppSettings::settings_path(),
+            )
+            .unwrap_or_default();
+            settings.font_size = state.pref_font_size;
+            settings.tab_size = state.pref_tab_size.parse().unwrap_or(4);
+            settings.theme = state.pref_theme.clone();
+            settings.auto_save = state.pref_auto_save;
+            settings.word_wrap = state.pref_word_wrap;
+            settings.show_line_numbers = state.pref_show_line_numbers;
+            settings.show_whitespace = state.pref_show_whitespace;
+            if let Err(e) = settings.save(&crate::io::settings::AppSettings::settings_path()) {
+                log::error!("Failed to save settings: {}", e);
+            }
+            // Apply to app state
+            state.font_size = settings.font_size;
+            state.word_wrap = settings.word_wrap;
+            state.show_line_numbers = settings.show_line_numbers;
+            state.show_whitespace = settings.show_whitespace;
+            state.show_preferences = false;
+            Task::none()
+        }
+        Message::CancelPreferences => {
+            state.show_preferences = false;
+            Task::none()
+        }
+        Message::CloseKeybindingsDialog => {
+            state.show_keybindings = false;
+            Task::none()
+        }
+        Message::PrefFontSizeIncrease => {
+            state.pref_font_size = (state.pref_font_size + 1.0).min(48.0);
+            Task::none()
+        }
+        Message::PrefFontSizeDecrease => {
+            state.pref_font_size = (state.pref_font_size - 1.0).max(8.0);
+            Task::none()
+        }
+        Message::PrefTabSizeChanged(val) => {
+            state.pref_tab_size = val;
+            Task::none()
+        }
+        Message::PrefToggleTheme => {
+            state.pref_theme = if state.pref_theme == "light" {
+                String::from("base16-ocean.dark")
+            } else {
+                String::from("light")
+            };
+            Task::none()
+        }
+        Message::PrefToggleAutoSave(v) => {
+            state.pref_auto_save = v;
+            Task::none()
+        }
+        Message::PrefToggleWordWrap(v) => {
+            state.pref_word_wrap = v;
+            Task::none()
+        }
+        Message::PrefToggleLineNumbers(v) => {
+            state.pref_show_line_numbers = v;
+            Task::none()
+        }
+        Message::PrefToggleWhitespace(v) => {
+            state.pref_show_whitespace = v;
             Task::none()
         }
 
@@ -1591,6 +1710,10 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.show_goto_line = false;
             } else if state.show_about {
                 state.show_about = false;
+            } else if state.show_preferences {
+                state.show_preferences = false;
+            } else if state.show_keybindings {
+                state.show_keybindings = false;
             } else {
                 state.active_menu = None;
             }
@@ -1729,7 +1852,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 
     // Check if any overlay is needed
     let has_dropdown = state.active_menu.is_some();
-    let has_floating = state.show_find || state.show_goto_line || state.show_about || state.show_find_in_files;
+    let has_floating = state.show_find || state.show_goto_line || state.show_about || state.show_find_in_files || state.show_preferences || state.show_keybindings;
 
     if !has_dropdown && !has_floating {
         return base;
@@ -1877,6 +2000,34 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         .into();
 
         layers.push(about_overlay);
+    }
+
+    // Preferences — floating centered
+    if state.show_preferences {
+        let pref_overlay: Element<'_, Message> = container(
+            opaque(super::preferences_dialog::view_preferences_dialog(state)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
+
+        layers.push(pref_overlay);
+    }
+
+    // Keybindings — floating centered
+    if state.show_keybindings {
+        let kb_overlay: Element<'_, Message> = container(
+            opaque(super::keybindings_dialog::view_keybindings_dialog()),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
+
+        layers.push(kb_overlay);
     }
 
     stack(layers).into()
