@@ -96,6 +96,55 @@ fn test_keybinding_display() {
 }
 
 #[test]
+fn test_matches_ctrl_n_new_file() {
+    let kb = KeyBindings::defaults();
+    assert!(kb.matches("new_file", "N", true, false, false));
+    assert!(kb.matches("new_file", "n", true, false, false));
+}
+
+#[test]
+fn test_matches_ctrl_shift_s_save_as() {
+    let kb = KeyBindings::defaults();
+    assert!(kb.matches("save_as", "S", true, true, false));
+}
+
+#[test]
+fn test_matches_ctrl_s_does_not_match_save_as() {
+    let kb = KeyBindings::defaults();
+    assert!(!kb.matches("save_as", "S", true, false, false));
+}
+
+#[test]
+fn test_matches_wrong_key_does_not_match() {
+    let kb = KeyBindings::defaults();
+    assert!(!kb.matches("new_file", "M", true, false, false));
+}
+
+#[test]
+fn test_matches_unknown_action_does_not_match() {
+    let kb = KeyBindings::defaults();
+    assert!(!kb.matches("unknown_action", "N", true, false, false));
+}
+
+#[test]
+fn test_matches_f3_find_next() {
+    let kb = KeyBindings::defaults();
+    assert!(kb.matches("find_next", "F3", false, false, false));
+}
+
+#[test]
+fn test_matches_shift_f3_find_prev() {
+    let kb = KeyBindings::defaults();
+    assert!(kb.matches("find_prev", "F3", false, true, false));
+}
+
+#[test]
+fn test_matches_escape() {
+    let kb = KeyBindings::defaults();
+    assert!(kb.matches("escape", "Escape", false, false, false));
+}
+
+#[test]
 fn test_all_actions_sorted() {
     let kb = KeyBindings::defaults();
     let actions = kb.all_actions_sorted();

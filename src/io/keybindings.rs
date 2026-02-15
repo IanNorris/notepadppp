@@ -124,6 +124,20 @@ impl KeyBindings {
             .join("keybindings.json")
     }
 
+    /// Check if the given key and modifiers match a keybinding action.
+    /// `key` should be the key name (e.g. "n", "s", "F3", "Escape", "]").
+    /// Comparison is case-insensitive for single character keys.
+    pub fn matches(&self, action: &str, key: &str, ctrl: bool, shift: bool, alt: bool) -> bool {
+        if let Some(binding) = self.bindings.get(action) {
+            binding.ctrl == ctrl
+                && binding.shift == shift
+                && binding.alt == alt
+                && binding.key.eq_ignore_ascii_case(key)
+        } else {
+            false
+        }
+    }
+
     /// Returns human-readable shortcut string like "Ctrl+G"
     pub fn display_shortcut(&self, action: &str) -> String {
         self.bindings
