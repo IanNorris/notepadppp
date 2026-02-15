@@ -192,8 +192,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Record macro (keystrokes)
 - [x] Play macro
 - [x] Play macro multiple times / until end of file
-- [ ] Save macros with keyboard shortcuts
-- [ ] Edit/manage saved macros
+
 
 ---
 
@@ -305,6 +304,26 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [ ] Go to offset
 - [x] Toggle between text and hex view (Ctrl+Shift+H)
 
+### 9.6 Binary Disassembler
+- [ ] Basic disassembly view for binary/executable files (via Capstone)
+- [ ] x86/x86-64 and ARM/AArch64 instruction decoding
+- [ ] Symbol loading and display (function names, labels)
+- [ ] DIA (Debug Interface Access) symbol support on Windows
+- [ ] Navigate to address / offset
+- [ ] Disassembly alongside hex view
+
+### 9.7 Quick Hash & Encoding (Selection Tools)
+- [ ] SHA-256 hash of selection
+- [ ] SHA-1 hash of selection
+- [ ] MD5 hash of selection
+- [ ] CRC32 of selection
+- [ ] Base64 encode/decode selection
+- [ ] URL encode/decode selection
+- [ ] Hex encode/decode selection
+- [ ] HTML entity encode/decode selection
+- [ ] Right-click context menu for quick hash/encode actions
+- [ ] Results shown inline or in status bar / popup
+
 ---
 
 ## Phase 10: Advanced Features
@@ -319,7 +338,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Base64 encode/decode
 - [x] URL encode/decode
 - [ ] Quoted-Printable encode/decode
-- [ ] SAML decode
+
 - [x] HTML entity encode/decode
 
 ### 10.3 XML Tools
@@ -361,11 +380,6 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [ ] Run current file in associated program
 - [ ] Run commands from within editor
 - [ ] Capture command output in panel
-
-### 11.3 FTP/SFTP (Optional)
-- [ ] Connect to remote servers
-- [ ] Edit remote files
-- [ ] File transfer
 
 ---
 
