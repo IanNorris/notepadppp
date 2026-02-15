@@ -95,7 +95,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [ ] Bookmark lines matching search
 - [x] Navigate between bookmarks (F2 / Shift+F2)
 - [ ] Copy/cut all bookmarked lines
-- [ ] Remove all bookmarked/unbookmarked lines
+- [x] Remove all bookmarked/unbookmarked lines
 - [x] Toggle bookmark on current line
 
 ### 3.5 Search Results History Panel
@@ -166,8 +166,8 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Sort lines numerically
 - [ ] Sort lines by column
 - [x] Remove duplicate lines
-- [ ] Remove empty lines
-- [ ] Remove empty lines (containing blank characters)
+- [x] Remove empty lines
+- [x] Remove empty lines (containing blank characters)
 - [x] Insert blank line above/below
 - [x] Reverse line order
 
@@ -251,7 +251,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 
 ### 8.1 Color Themes
 - [x] Dark theme built-in
-- [ ] Light theme built-in
+- [x] Light theme built-in
 - [ ] Simple color customization (background, foreground, selection, caret)
 - [ ] Per-language syntax colors
 - [ ] Import/export themes
@@ -280,14 +280,14 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Validate JSON (show errors)
 - [ ] JSON tree viewer panel
 - [ ] JSON path navigation
-- [ ] Sort JSON keys
+- [x] Sort JSON keys
 
 ### 9.3 CSV Viewer/Editor
 - [x] Tabular view for CSV files
 - [ ] Column alignment/colorization
-- [ ] Sort by column
-- [ ] Filter rows
-- [ ] Add/remove columns
+- [x] Sort by column
+- [x] Filter rows
+- [x] Add/remove columns
 - [ ] CSV validation
 - [ ] Toggle between text and table view
 
@@ -311,7 +311,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 ### 10.1 Printing & Export
 - [ ] Print with syntax highlighting
 - [x] Export as HTML (with highlighting)
-- [ ] Export as RTF
+- [x] Export as RTF
 - [ ] Line numbers in print output
 
 ### 10.2 MIME / Encoding Tools
@@ -319,7 +319,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] URL encode/decode
 - [ ] Quoted-Printable encode/decode
 - [ ] SAML decode
-- [ ] HTML entity encode/decode
+- [x] HTML entity encode/decode
 
 ### 10.3 XML Tools
 - [ ] Pretty-print XML
