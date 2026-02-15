@@ -269,6 +269,7 @@ fn build_search_menu<'a>(expanded: &std::collections::HashSet<String>, t: &AppTh
 
 fn build_view_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collections::HashSet<String>, t: &AppTheme) -> Vec<Element<'a, Message>> {
     let mut items = vec![
+        check_item("Toolbar", state.show_toolbar, Message::ToggleToolbar, t),
         check_item("Word Wrap", state.word_wrap, Message::ToggleWordWrap, t),
         check_item("Line Numbers", state.show_line_numbers, Message::ToggleLineNumbers, t),
         check_item("Show Whitespace", state.show_whitespace, Message::ToggleWhitespace, t),

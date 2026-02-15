@@ -13,3 +13,4 @@ pub mod preferences_dialog;
 pub mod search_panel;
 pub mod search_results_panel;
 pub mod theme;
+pub mod toolbar;

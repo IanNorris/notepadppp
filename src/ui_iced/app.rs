@@ -145,6 +145,7 @@ pub enum Message {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ToggleToolbar,
     ToggleFold,
     ToggleFoldAt(usize),
     FoldAll,
@@ -311,6 +312,7 @@ pub struct NotepadIced {
     pub show_line_numbers: bool,
     pub show_whitespace: bool,
     pub show_status_bar: bool,
+    pub show_toolbar: bool,
     pub show_minimap: bool,
     pub show_function_list: bool,
     pub show_markdown_preview: bool,
@@ -436,6 +438,7 @@ impl Default for NotepadIced {
             word_wrap: settings.word_wrap,
             show_line_numbers: settings.show_line_numbers,
             show_whitespace: settings.show_whitespace,
+            show_toolbar: true,
             show_status_bar: true,
             show_minimap: false,
             show_function_list: false,
@@ -1186,6 +1189,10 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::ToggleStatusBar => {
             state.show_status_bar = !state.show_status_bar;
+            Task::none()
+        }
+        Message::ToggleToolbar => {
+            state.show_toolbar = !state.show_toolbar;
             Task::none()
         }
         Message::ToggleMinimap => {
@@ -2410,7 +2417,14 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         }
     };
 
-    let mut base_content = column![menu_bar, tab_bar_area, main_area];
+    let mut base_content = column![menu_bar];
+
+    if state.show_toolbar {
+        base_content = base_content.push(super::toolbar::view_toolbar(state));
+    }
+
+    base_content = base_content.push(tab_bar_area);
+    base_content = base_content.push(main_area);
 
     // Search results panel (docked below editor)
     if state.show_search_results_panel {
