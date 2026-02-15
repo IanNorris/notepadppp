@@ -8,6 +8,7 @@ use crate::editor::folding::FoldManager;
 use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
 use crate::search::{SearchEngine, SearchMatch, SearchMode};
+use crate::search::find_in_files::FileSearchResult;
 
 use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
@@ -195,6 +196,21 @@ pub enum Message {
     GotoSymbol(usize),
     CsvSortColumn(usize),
     CsvToggleHeaders,
+
+    // Find in Files
+    FifQueryChanged(String),
+    FifDirectoryChanged(String),
+    FifFileFilterChanged(String),
+    FifToggleRecursive,
+    FifToggleCaseSensitive,
+    FifToggleRegex,
+    FifSearch,
+    FifSearchComplete(Result<Vec<FileSearchResult>, String>),
+    FifClickResult(std::path::PathBuf, usize),
+    CloseFindInFiles,
+    DragFifStart,
+    DragFifMove(iced::Point),
+    DragFifEnd,
 }
 
 pub struct NotepadIced {
@@ -260,6 +276,20 @@ pub struct NotepadIced {
 
     // Code folding
     pub fold_manager: FoldManager,
+
+    // Find in Files
+    pub show_find_in_files: bool,
+    pub fif_query: String,
+    pub fif_directory: String,
+    pub fif_file_filter: String,
+    pub fif_recursive: bool,
+    pub fif_case_sensitive: bool,
+    pub fif_use_regex: bool,
+    pub fif_results: Vec<FileSearchResult>,
+    pub fif_searching: bool,
+    pub fif_panel_pos: Option<(f32, f32)>,
+    pub dragging_fif_panel: bool,
+    pub fif_drag_offset: (f32, f32),
 }
 
 impl Default for NotepadIced {
@@ -303,6 +333,18 @@ impl Default for NotepadIced {
             last_macro: None,
             file_extension: String::new(),
             fold_manager: FoldManager::new(),
+            show_find_in_files: false,
+            fif_query: String::new(),
+            fif_directory: String::new(),
+            fif_file_filter: String::from("*.*"),
+            fif_recursive: true,
+            fif_case_sensitive: false,
+            fif_use_regex: false,
+            fif_results: Vec::new(),
+            fif_searching: false,
+            fif_panel_pos: None,
+            dragging_fif_panel: false,
+            fif_drag_offset: (0.0, 0.0),
         }
     }
 }
@@ -331,6 +373,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::SessionFileChosen(_) | Message::ExportSaved(_) | Message::CompareFileLoaded(_)
             | Message::EscapePressed
             | Message::DragFindStart | Message::DragFindMove(_) | Message::DragFindEnd
+            | Message::FifQueryChanged(_) | Message::FifDirectoryChanged(_) | Message::FifFileFilterChanged(_)
+            | Message::FifToggleRecursive | Message::FifToggleCaseSensitive | Message::FifToggleRegex
+            | Message::FifSearch | Message::FifSearchComplete(_) | Message::FifClickResult(_, _)
+            | Message::CloseFindInFiles
+            | Message::DragFifStart | Message::DragFifMove(_) | Message::DragFifEnd
     );
     if should_close_menu {
         state.active_menu = None;
@@ -879,7 +926,16 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ShowFindInFiles => {
-            log::info!("Find in files (not yet implemented in Iced UI)");
+            state.show_find_in_files = !state.show_find_in_files;
+            // Pre-fill directory from current file's parent if available
+            if state.show_find_in_files && state.fif_directory.is_empty() {
+                if let Some(path) = &state.tab_manager.active_document().path {
+                    if let Some(parent) = path.parent() {
+                        state.fif_directory = parent.display().to_string();
+                    }
+                }
+            }
+            state.active_menu = None;
             Task::none()
         }
         Message::SelectAllOccurrences => {
@@ -1418,6 +1474,94 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // ── Find in Files ──
+        Message::FifQueryChanged(q) => {
+            state.fif_query = q;
+            Task::none()
+        }
+        Message::FifDirectoryChanged(d) => {
+            state.fif_directory = d;
+            Task::none()
+        }
+        Message::FifFileFilterChanged(f) => {
+            state.fif_file_filter = f;
+            Task::none()
+        }
+        Message::FifToggleRecursive => {
+            state.fif_recursive = !state.fif_recursive;
+            Task::none()
+        }
+        Message::FifToggleCaseSensitive => {
+            state.fif_case_sensitive = !state.fif_case_sensitive;
+            Task::none()
+        }
+        Message::FifToggleRegex => {
+            state.fif_use_regex = !state.fif_use_regex;
+            Task::none()
+        }
+        Message::FifSearch => {
+            if state.fif_query.is_empty() || state.fif_directory.is_empty() {
+                return Task::none();
+            }
+            state.fif_searching = true;
+            state.fif_results.clear();
+            let dir = std::path::PathBuf::from(&state.fif_directory);
+            let query = state.fif_query.clone();
+            let filter = state.fif_file_filter.clone();
+            let recursive = state.fif_recursive;
+            let case_sensitive = state.fif_case_sensitive;
+            let use_regex = state.fif_use_regex;
+            Task::perform(
+                async move {
+                    crate::search::FindInFiles::search(
+                        &dir, &query, &filter, recursive, case_sensitive, use_regex,
+                    )
+                    .map_err(|e| e.to_string())
+                },
+                Message::FifSearchComplete,
+            )
+        }
+        Message::FifSearchComplete(result) => {
+            state.fif_searching = false;
+            match result {
+                Ok(results) => state.fif_results = results,
+                Err(e) => log::error!("Find in Files error: {}", e),
+            }
+            Task::none()
+        }
+        Message::FifClickResult(path, line) => {
+            // Open the file in a new tab and go to the line
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        state.file_extension = ext.to_lowercase();
+                    }
+                    match state.tab_manager.open_file(path) {
+                        Ok(idx) => {
+                            let doc = state.tab_manager.get_document(idx).unwrap();
+                            let buf_text = doc.buffer.text();
+                            state.fold_manager.detect_regions(&buf_text);
+                            state.tab_contents.push(TabContent::with_text(&buf_text));
+                        }
+                        Err(_) => {
+                            state.tab_manager.new_tab();
+                            state.fold_manager.detect_regions(&content);
+                            state.tab_contents.push(TabContent::with_text(&content));
+                        }
+                    }
+                    // Go to the matched line
+                    state.tab_manager.active_document_mut().cursor.position.line = line;
+                    state.tab_manager.active_document_mut().cursor.position.col = 0;
+                }
+                Err(e) => log::error!("Failed to open file: {}", e),
+            }
+            Task::none()
+        }
+        Message::CloseFindInFiles => {
+            state.show_find_in_files = false;
+            Task::none()
+        }
+
         // ── Keyboard ──
         Message::EscapePressed => {
             if state.show_find {
@@ -1425,6 +1569,8 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.show_replace = false;
                 state.search_matches.clear();
                 state.current_match_index = None;
+            } else if state.show_find_in_files {
+                state.show_find_in_files = false;
             } else if state.show_goto_line {
                 state.show_goto_line = false;
             } else if state.show_about {
@@ -1457,6 +1603,28 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::DragFindEnd => {
             state.dragging_find_panel = false;
+            Task::none()
+        }
+        Message::DragFifStart => {
+            state.dragging_fif_panel = true;
+            let pos = state.fif_panel_pos.unwrap_or((0.0, 60.0));
+            state.fif_drag_offset = (
+                state.last_mouse_pos.x - pos.0,
+                state.last_mouse_pos.y - pos.1,
+            );
+            Task::none()
+        }
+        Message::DragFifMove(point) => {
+            state.last_mouse_pos = point;
+            if state.dragging_fif_panel {
+                let x = (point.x - state.fif_drag_offset.0).max(0.0);
+                let y = (point.y - state.fif_drag_offset.1).max(0.0);
+                state.fif_panel_pos = Some((x, y));
+            }
+            Task::none()
+        }
+        Message::DragFifEnd => {
+            state.dragging_fif_panel = false;
             Task::none()
         }
     }
@@ -1507,7 +1675,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 
     // Check if any overlay is needed
     let has_dropdown = state.active_menu.is_some();
-    let has_floating = state.show_find || state.show_goto_line || state.show_about;
+    let has_floating = state.show_find || state.show_goto_line || state.show_about || state.show_find_in_files;
 
     if !has_dropdown && !has_floating {
         return base;
@@ -1591,6 +1759,42 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         };
 
         layers.push(search_overlay);
+    }
+
+    // Find in Files — floating non-modal draggable window
+    if state.show_find_in_files {
+        if state.dragging_fif_panel {
+            let drag_tracker: Element<'_, Message> = mouse_area(
+                container(Space::new(Length::Fill, Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(Message::DragFifMove)
+            .on_release(Message::DragFifEnd)
+            .into();
+            layers.push(drag_tracker);
+        }
+
+        let fif_widget = opaque(super::find_in_files_panel::view_find_in_files_panel(state));
+
+        let fif_overlay: Element<'_, Message> = match state.fif_panel_pos {
+            Some((x, y)) => {
+                container(fif_widget)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding { top: y, right: 0.0, bottom: 0.0, left: x })
+                    .into()
+            }
+            None => {
+                container(fif_widget)
+                    .padding(iced::Padding { top: 60.0, right: 16.0, bottom: 0.0, left: 0.0 })
+                    .align_right(Length::Fill)
+                    .height(Length::Shrink)
+                    .into()
+            }
+        };
+
+        layers.push(fif_overlay);
     }
 
     // Go to Line — floating non-modal, centered

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileSearchResult {
     pub path: PathBuf,
     pub matches: Vec<SearchMatch>,
