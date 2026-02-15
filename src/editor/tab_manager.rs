@@ -105,6 +105,36 @@ impl TabManager {
         }
     }
 
+    /// Add an existing document as a new tab and return its index.
+    pub fn add_document(&mut self, doc: Document) -> usize {
+        let name = if doc.path.is_some() {
+            None
+        } else {
+            self.untitled_counter += 1;
+            Some(format!("Untitled {}", self.untitled_counter))
+        };
+        self.tabs.push(doc);
+        self.untitled_names.push(name);
+        let idx = self.tabs.len() - 1;
+        self.active_tab = idx;
+        idx
+    }
+
+    /// Remove a document at the given index without auto-creating a new tab.
+    /// Returns the document if it existed.
+    pub fn remove_document(&mut self, index: usize) -> Option<Document> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        let doc = self.tabs.remove(index);
+        self.untitled_names.remove(index);
+
+        if self.active_tab >= self.tabs.len() && !self.tabs.is_empty() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+        Some(doc)
+    }
+
     /// Close all tabs, replacing with a single new untitled tab.
     pub fn close_all(&mut self) {
         self.tabs.clear();

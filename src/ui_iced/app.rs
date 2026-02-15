@@ -163,6 +163,12 @@ pub enum Message {
     SplitCloseTab(usize),
     SetActivePane(usize),
 
+    // Tab management across panes
+    NewTabInActivePane,
+    FileDropped(std::path::PathBuf),
+    MoveTabToSplit(usize),
+    MoveTabFromSplit(usize),
+
     // Macro
     ToggleMacroRecording,
     PlayLastMacro,
@@ -460,6 +466,8 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::DragFifStart | Message::DragFifMove(_) | Message::DragFifEnd
             | Message::SplitEditorAction(_) | Message::SplitNewTab | Message::SplitSelectTab(_)
             | Message::SplitCloseTab(_) | Message::SetActivePane(_)
+            | Message::NewTabInActivePane | Message::FileDropped(_)
+            | Message::MoveTabToSplit(_) | Message::MoveTabFromSplit(_)
     );
     if should_close_menu {
         state.active_menu = None;
@@ -1909,6 +1917,126 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.active_pane = pane;
             Task::none()
         }
+        Message::NewTabInActivePane => {
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_tab_manager.new_tab();
+                state.split_tab_contents.push(TabContent::new());
+            } else {
+                state.tab_manager.new_tab();
+                state.tab_contents.push(TabContent::new());
+            }
+            Task::none()
+        }
+        Message::FileDropped(path) => {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                    state.split_file_extension = ext;
+                    match state.split_tab_manager.open_file(path) {
+                        Ok(idx) => {
+                            let doc = state.split_tab_manager.get_document(idx).unwrap();
+                            let buf_text = doc.buffer.text();
+                            state.split_tab_contents.push(TabContent::with_text(&buf_text));
+                        }
+                        Err(_) => {
+                            state.split_tab_manager.new_tab();
+                            state.split_tab_contents.push(TabContent::with_text(&content));
+                        }
+                    }
+                } else {
+                    state.file_extension = ext;
+                    match state.tab_manager.open_file(path) {
+                        Ok(idx) => {
+                            let doc = state.tab_manager.get_document(idx).unwrap();
+                            let buf_text = doc.buffer.text();
+                            state.fold_manager.detect_regions(&buf_text);
+                            state.tab_contents.push(TabContent::with_text(&buf_text));
+                        }
+                        Err(_) => {
+                            state.tab_manager.new_tab();
+                            state.fold_manager.detect_regions(&content);
+                            state.tab_contents.push(TabContent::with_text(&content));
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::MoveTabToSplit(idx) => {
+            // Move tab at idx from primary pane to split pane
+            if idx >= state.tab_contents.len() || idx >= state.tab_manager.tab_count() {
+                return Task::none();
+            }
+            // Ensure split exists
+            if state.split_mode == SplitMode::None {
+                state.split_mode = SplitMode::Horizontal;
+                state.split_tab_manager = TabManager::new();
+                state.split_tab_contents = vec![TabContent::new()];
+                state.split_font_size = state.font_size;
+                state.split_file_extension.clear();
+            }
+            // Sync content before moving
+            sync_content_to_doc(state, idx);
+            let tab_content = state.tab_contents.remove(idx);
+            if let Some(doc) = state.tab_manager.remove_document(idx) {
+                if let Some(ext) = doc.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+                    state.split_file_extension = ext.to_lowercase();
+                }
+                // Remove the default empty tab in split if it's the only one and is empty
+                if state.split_tab_manager.tab_count() == 1 {
+                    let split_doc = state.split_tab_manager.active_document();
+                    if split_doc.buffer.text().trim().is_empty() && split_doc.path.is_none() {
+                        state.split_tab_contents.remove(0);
+                        state.split_tab_manager.remove_document(0);
+                    }
+                }
+                state.split_tab_manager.add_document(doc);
+                state.split_tab_contents.push(tab_content);
+            }
+            // If primary has no tabs left, create one
+            if state.tab_manager.tab_count() == 0 {
+                state.tab_manager.new_tab();
+                state.tab_contents.push(TabContent::new());
+            }
+            state.active_pane = 1;
+            Task::none()
+        }
+        Message::MoveTabFromSplit(idx) => {
+            // Move tab at idx from split pane to primary pane
+            if state.split_mode == SplitMode::None {
+                return Task::none();
+            }
+            if idx >= state.split_tab_contents.len() || idx >= state.split_tab_manager.tab_count() {
+                return Task::none();
+            }
+            // Sync split content before moving
+            sync_split_content_to_doc(state, idx);
+            let tab_content = state.split_tab_contents.remove(idx);
+            if let Some(doc) = state.split_tab_manager.remove_document(idx) {
+                if let Some(ext) = doc.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+                    state.file_extension = ext.to_lowercase();
+                }
+                state.tab_manager.add_document(doc);
+                state.tab_contents.push(tab_content);
+            }
+            // If split has no tabs left, close the split
+            if state.split_tab_manager.tab_count() == 0 {
+                state.split_mode = SplitMode::None;
+                state.split_tab_manager = TabManager::new();
+                state.split_tab_contents = vec![TabContent::new()];
+                state.active_pane = 0;
+            } else {
+                // Check if only an empty tab remains
+                if state.split_tab_manager.tab_count() == 1 {
+                    let split_doc = state.split_tab_manager.active_document();
+                    if split_doc.buffer.text().trim().is_empty() && split_doc.path.is_none() {
+                        state.split_mode = SplitMode::None;
+                        state.active_pane = 0;
+                    }
+                }
+            }
+            Task::none()
+        }
     }
 }
 
@@ -2187,7 +2315,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
 }
 
 pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
-    keyboard::on_key_press(|key, modifiers| {
+    let keys = keyboard::on_key_press(|key, modifiers| {
         // Escape closes dialogs/menus — handled in update() which checks priority
         if matches!(key.as_ref(), keyboard::Key::Named(keyboard::key::Named::Escape)) {
             return Some(Message::EscapePressed);
@@ -2219,6 +2347,7 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
 
         match key.as_ref() {
             keyboard::Key::Character("n") if !modifiers.shift() => Some(Message::NewTab),
+            keyboard::Key::Character("t") if !modifiers.shift() => Some(Message::NewTabInActivePane),
             keyboard::Key::Character("o") => Some(Message::OpenFile),
             keyboard::Key::Character("s") if modifiers.shift() => Some(Message::SaveAs),
             keyboard::Key::Character("s") => Some(Message::Save),
@@ -2241,7 +2370,18 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
             keyboard::Key::Character("p") if modifiers.shift() => Some(Message::PlayLastMacro),
             _ => None,
         }
-    })
+    });
+
+    let file_drops = iced::event::listen_with(|event, _status, _window| {
+        match event {
+            iced::Event::Window(iced::window::Event::FileDropped(path)) => {
+                Some(Message::FileDropped(path))
+            }
+            _ => None,
+        }
+    });
+
+    Subscription::batch(vec![keys, file_drops])
 }
 
 pub fn theme(state: &NotepadIced) -> Theme {
@@ -2258,6 +2398,21 @@ fn sync_content_to_doc(state: &mut NotepadIced, idx: usize) {
     if let Some(tc) = state.tab_contents.get(idx) {
         let new_text = tc.content.text();
         if let Some(doc) = state.tab_manager.get_document_mut(idx) {
+            let len = doc.buffer.len_bytes();
+            if len > 0 {
+                doc.buffer.delete(0, len);
+            }
+            if !new_text.is_empty() {
+                doc.buffer.insert(0, &new_text);
+            }
+        }
+    }
+}
+
+fn sync_split_content_to_doc(state: &mut NotepadIced, idx: usize) {
+    if let Some(tc) = state.split_tab_contents.get(idx) {
+        let new_text = tc.content.text();
+        if let Some(doc) = state.split_tab_manager.get_document_mut(idx) {
             let len = doc.buffer.len_bytes();
             if len > 0 {
                 doc.buffer.delete(0, len);
@@ -2336,6 +2491,8 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let t_accent = state.theme.accent;
     let t_tab_bar = state.theme.tab_bar_bg;
 
+    let has_split = state.split_mode != SplitMode::None;
+
     let mut tabs = row![].spacing(2).padding([2, 4]);
 
     for i in 0..count {
@@ -2358,7 +2515,21 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab = button(row![label, close].spacing(6).padding([2, 8]))
+        let mut tab_row = row![label].spacing(6).padding([2, 8]);
+        if has_split {
+            let move_btn = button(text("→").size(11))
+                .on_press(Message::MoveTabToSplit(i))
+                .padding(2)
+                .style(move |_theme: &Theme, _status| button::Style {
+                    background: None,
+                    text_color: t_text_dim,
+                    ..Default::default()
+                });
+            tab_row = tab_row.push(move_btn);
+        }
+        tab_row = tab_row.push(close);
+
+        let tab = button(tab_row)
             .on_press(Message::SelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
@@ -2547,7 +2718,16 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab = button(row![label, close].spacing(6).padding([2, 8]))
+        let move_btn = button(text("←").size(11))
+            .on_press(Message::MoveTabFromSplit(i))
+            .padding(2)
+            .style(move |_theme: &Theme, _status| button::Style {
+                background: None,
+                text_color: t_text_dim,
+                ..Default::default()
+            });
+
+        let tab = button(row![label, move_btn, close].spacing(6).padding([2, 8]))
             .on_press(Message::SplitSelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
