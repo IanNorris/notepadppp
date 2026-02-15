@@ -68,7 +68,7 @@ fn setting_row<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a,
 pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
     let title = text("Preferences").size(18).color(AppColors::TEXT);
 
-    let close_x = button(text("✕").size(14))
+    let close_x = button(text("x").size(14))
         .on_press(Message::CancelPreferences)
         .padding([2, 6])
         .style(|_theme: &Theme, status| {
@@ -93,7 +93,7 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> 
 
     // Font size: -/+ buttons with display
     let font_size_control = row![
-        button(text("−").size(14))
+        button(text("-").size(14))
             .on_press(Message::PrefFontSizeDecrease)
             .padding([2, 8])
             .style(|_t: &Theme, s| {

@@ -56,6 +56,7 @@ pub enum Message {
 
     // Menu state
     MenuToggle(String),
+    MenuSwitch(String),
     MenuClose,
     SubMenuToggle(String),
 
@@ -408,7 +409,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
     // Close menu for most actions (except MenuToggle/MenuClose/EditorAction and dialog-internal messages)
     let should_close_menu = !matches!(
         message,
-        Message::MenuToggle(_) | Message::MenuClose | Message::SubMenuToggle(_) | Message::EditorAction(_)
+        Message::MenuToggle(_) | Message::MenuSwitch(_) | Message::MenuClose | Message::SubMenuToggle(_) | Message::EditorAction(_)
             | Message::FileOpened(_) | Message::FileSaved(_)
             | Message::FindQueryChanged(_) | Message::ReplaceTextChanged(_)
             | Message::ToggleCaseSensitive | Message::ToggleWholeWord | Message::ToggleRegex
@@ -588,6 +589,14 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.active_menu = None;
                 state.expanded_submenus.clear();
             } else {
+                state.active_menu = Some(name);
+                state.expanded_submenus.clear();
+            }
+            Task::none()
+        }
+        Message::MenuSwitch(name) => {
+            // Switch to a different menu when one is already open (Windows-style hover behavior)
+            if state.active_menu.is_some() {
                 state.active_menu = Some(name);
                 state.expanded_submenus.clear();
             }
@@ -1866,6 +1875,8 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             let dropdown = scrollable(menu_bar::view_dropdown(state, menu_name))
                 .height(Length::Shrink);
 
+            let left_offset = menu_bar::menu_x_offset(menu_name);
+
             let dropdown_overlay: Element<'_, Message> = container(
                 opaque(
                     container(dropdown)
@@ -1881,7 +1892,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                         }),
                 ),
             )
-            .padding(iced::Padding { top: 26.0, right: 0.0, bottom: 0.0, left: 0.0 })
+            .padding(iced::Padding { top: 26.0, right: 0.0, bottom: 0.0, left: left_offset })
             .width(Length::Shrink)
             .height(Length::Shrink)
             .into();
@@ -2162,7 +2173,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let count = state.tab_manager.tab_count();
     let active = state.tab_manager.active_index();
 
-    let mut tabs = row![].spacing(2).padding(4);
+    let mut tabs = row![].spacing(2).padding([2, 4]);
 
     for i in 0..count {
         let tab_title = state.tab_manager.get_tab_title(i);
@@ -2175,7 +2186,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         };
 
         let label = text(tab_title).size(13);
-        let close = button(text("×").size(13))
+        let close = button(text("x").size(13))
             .on_press(Message::CloseTab(i))
             .padding(2)
             .style(|_theme: &Theme, _status| button::Style {
@@ -2184,7 +2195,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab = button(row![label, close].spacing(6).padding([4, 8]))
+        let tab = button(row![label, close].spacing(6).padding([2, 8]))
             .on_press(Message::SelectTab(i))
             .style(move |_theme: &Theme, _status| button::Style {
                 background: Some(iced::Background::Color(bg_color)),
@@ -2242,7 +2253,7 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 let fold_indicator = if state.fold_manager.is_folded(line_idx) {
                     "[+] "
                 } else if state.fold_manager.is_fold_point(line_idx) {
-                    "[−] "
+                    "[-] "
                 } else {
                     "    "
                 };

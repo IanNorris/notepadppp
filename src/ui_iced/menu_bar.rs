@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, mouse_area, row, text, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::Message;
@@ -10,42 +10,74 @@ const MENU_HOVER: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
 const SEPARATOR_COLOR: iced::Color = iced::Color::from_rgb(0.30, 0.30, 0.35);
 const SUBMENU_HEADER: iced::Color = iced::Color::from_rgb(0.55, 0.55, 0.60);
 
+/// Menu labels in order — used for positioning dropdowns
+pub const MENU_LABELS: &[&str] = &[
+    "File", "Edit", "Search", "View", "Language", "Tools", "Macro", "Settings", "Help",
+];
+
 // ── Public API ──
 
 pub fn view_menu_bar<'a>(active_menu: &Option<String>) -> Element<'a, Message> {
-    let labels = [
-        "File", "Edit", "Search", "View", "Language", "Tools", "Macro", "Settings", "Help",
-    ];
-
     let mut items = row![].spacing(0).padding([0, 4]);
 
-    for label in &labels {
+    for label in MENU_LABELS {
         let is_active = active_menu.as_deref() == Some(*label);
         let bg = if is_active { MENU_HOVER } else { AppColors::TAB_BAR_BG };
+        let has_open_menu = active_menu.is_some();
+        let label_owned = label.to_string();
 
         let btn = button(text(*label).size(13))
             .on_press(Message::MenuToggle(label.to_string()))
             .padding([4, 10])
-            .style(move |_theme: &Theme, _status| button::Style {
-                background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
-                border: iced::Border {
-                    radius: 2.0.into(),
+            .style(move |_theme: &Theme, status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => MENU_HOVER,
+                    _ => bg,
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: AppColors::TEXT,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
+                }
             });
 
-        items = items.push(btn);
+        // When a menu is already open, hovering another menu button should switch to it
+        let btn_element: Element<'a, Message> = if has_open_menu && !is_active {
+            mouse_area(btn)
+                .on_enter(Message::MenuSwitch(label_owned))
+                .into()
+        } else {
+            btn.into()
+        };
+
+        items = items.push(btn_element);
     }
 
     container(items)
         .width(Length::Fill)
+        .clip(true)
         .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(AppColors::TAB_BAR_BG)),
             ..Default::default()
         })
         .into()
+}
+
+/// Calculate the horizontal offset for a dropdown menu based on the menu name
+pub fn menu_x_offset(menu_name: &str) -> f32 {
+    let mut offset = 4.0; // initial padding
+    for label in MENU_LABELS {
+        if *label == menu_name {
+            return offset;
+        }
+        // Approximate width: ~8px per char + 20px padding
+        offset += (label.len() as f32) * 8.0 + 20.0;
+    }
+    offset
 }
 
 pub fn view_dropdown<'a>(state: &super::app::NotepadIced, menu_name: &str) -> Element<'a, Message> {
@@ -173,7 +205,7 @@ fn build_edit_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
         (Encoding::ASCII, "ANSI"),
     ];
     for (e, label) in &encodings {
-        let check = if enc == *e { "✓ " } else { "   " };
+        let check = if enc == *e { " * " } else { "   " };
         enc_children.push(menu_item(
             &format!("{}{}", check, label),
             "",
@@ -189,7 +221,7 @@ fn build_edit_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
         (LineEnding::CR, "Mac (CR)"),
     ];
     for (l, label) in &endings {
-        let check = if le == *l { "✓ " } else { "   " };
+        let check = if le == *l { " * " } else { "   " };
         le_children.push(menu_item(
             &format!("{}{}", check, label),
             "",
@@ -266,7 +298,7 @@ fn build_language_menu<'a>(state: &super::app::NotepadIced) -> Vec<Element<'a, M
 
     let mut items = Vec::new();
     for lang in &common_langs {
-        let check = if current_lang == *lang { "✓ " } else { "   " };
+        let check = if current_lang == *lang { " * " } else { "   " };
         items.push(menu_item(
             &format!("{}{}", check, lang),
             "",
@@ -381,7 +413,7 @@ fn menu_item_disabled<'a>(label: &str, shortcut: &str) -> Element<'a, Message> {
 }
 
 fn check_item<'a>(label: &str, checked: bool, msg: Message) -> Element<'a, Message> {
-    let prefix = if checked { "✓ " } else { "   " };
+    let prefix = if checked { " * " } else { "   " };
     menu_item(&format!("{}{}", prefix, label), "", msg)
 }
 

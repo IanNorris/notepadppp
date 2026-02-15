@@ -107,7 +107,7 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     for (i, h) in csv_data.headers.iter().enumerate() {
         let sort_indicator = if state.csv_sort_column == Some(i) {
-            if state.csv_sort_ascending { " ▲" } else { " ▼" }
+            if state.csv_sort_ascending { " ^" } else { " v" }
         } else {
             ""
         };

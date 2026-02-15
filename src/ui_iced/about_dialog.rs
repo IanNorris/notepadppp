@@ -44,7 +44,7 @@ pub fn view_about_dialog<'a>() -> Element<'a, Message> {
     .align_x(iced::Alignment::Center);
 
     container(content)
-        .width(Length::Fill)
+        .width(Length::Fixed(320.0))
         .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(DIALOG_BG)),
             border: iced::Border {

@@ -15,7 +15,7 @@ pub fn view_keybindings_dialog<'a>() -> Element<'a, Message> {
 
     let title = text("Keyboard Shortcuts").size(18).color(AppColors::TEXT);
 
-    let close_x = button(text("✕").size(14))
+    let close_x = button(text("x").size(14))
         .on_press(Message::CloseKeybindingsDialog)
         .padding([2, 6])
         .style(|_theme: &Theme, status| {
