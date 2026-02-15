@@ -25,6 +25,8 @@ sha2 = "0.10"
 sha1 = "0.10"
 md-5 = "0.10"
 crc32fast = "1"
+capstone = "0.14"
+goblin = "0.9"
 iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
 
 [dev-dependencies]

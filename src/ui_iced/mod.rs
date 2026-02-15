@@ -1,6 +1,7 @@
 pub mod about_dialog;
 pub mod app;
 pub mod csv_panel;
+pub mod disasm_panel;
 pub mod find_in_files_panel;
 pub mod function_list_panel;
 pub mod goto_dialog;

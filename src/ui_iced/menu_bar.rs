@@ -390,6 +390,7 @@ fn build_tools_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collect
     items.push(separator(t));
     items.push(menu_item("Compare Files...", "", Message::CompareFiles, t));
     items.push(check_item("Hex Viewer", state.show_hex_viewer, Message::ToggleHexViewer, t));
+    items.push(check_item("Disassembler", state.show_disasm, Message::ToggleDisasm, t));
     items
 }
 

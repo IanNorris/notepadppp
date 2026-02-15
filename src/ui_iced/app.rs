@@ -181,6 +181,15 @@ pub enum Message {
     MimeHexDecode,
     CompareFiles,
     ToggleHexViewer,
+    ToggleDisasm,
+    DisasmGotoAddress(String),
+    DisasmGotoAddressInput(String),
+    DisasmGotoSymbol(String),
+    DisasmGotoSymbolInput(String),
+    DisasmSetBaseAddress(String),
+    DisasmBaseAddressInput(String),
+    DisasmSetArch(crate::tools::disasm::DisasmArch),
+    DisasmScroll(i32),
     HashSha256,
     HashSha1,
     HashMd5,
@@ -486,6 +495,15 @@ pub struct NotepadIced {
 
     // Status bar message (transient feedback)
     pub status_message: Option<(String, std::time::Instant)>,
+
+    // Disassembler
+    pub show_disasm: bool,
+    pub disasm_state: Option<crate::tools::disasm::Disassembler>,
+    pub disasm_offset: usize,
+    pub disasm_arch: crate::tools::disasm::DisasmArch,
+    pub disasm_goto_addr: String,
+    pub disasm_goto_sym: String,
+    pub disasm_base_addr_input: String,
 }
 
 impl Default for NotepadIced {
@@ -586,6 +604,13 @@ impl Default for NotepadIced {
             search_results_panel: SearchResultsManager::default(),
             editor_context_menu: false,
             status_message: None,
+            show_disasm: false,
+            disasm_state: None,
+            disasm_offset: 0,
+            disasm_arch: crate::tools::disasm::DisasmArch::X86_64,
+            disasm_goto_addr: String::new(),
+            disasm_goto_sym: String::new(),
+            disasm_base_addr_input: String::new(),
         };
 
         // Apply CLI arguments if provided
@@ -1689,6 +1714,95 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::ToggleHexViewer => {
             state.show_hex_viewer = !state.show_hex_viewer;
+            Task::none()
+        }
+        Message::ToggleDisasm => {
+            state.show_disasm = !state.show_disasm;
+            if state.show_disasm && state.disasm_state.is_none() {
+                // Initialize from current file's bytes
+                let content_text = state
+                    .tab_contents
+                    .get(state.tab_manager.active_index())
+                    .map(|tc| tc.content.text())
+                    .unwrap_or_default();
+                let bytes = content_text.into_bytes();
+                if !bytes.is_empty() {
+                    let disasm = crate::tools::disasm::Disassembler::from_bytes(
+                        bytes,
+                        state.disasm_arch,
+                        0,
+                    );
+                    state.disasm_base_addr_input = "0".to_string();
+                    state.disasm_offset = 0;
+                    state.disasm_state = Some(disasm);
+                }
+            }
+            Task::none()
+        }
+        Message::DisasmGotoAddressInput(s) => {
+            state.disasm_goto_addr = s;
+            Task::none()
+        }
+        Message::DisasmGotoAddress(addr_str) => {
+            let addr_str = addr_str.trim().trim_start_matches("0x").trim_start_matches("0X");
+            if let Ok(addr) = u64::from_str_radix(addr_str, 16) {
+                if let Some(ref disasm) = state.disasm_state {
+                    if let Some(off) = disasm.address_to_offset(addr) {
+                        state.disasm_offset = off;
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::DisasmGotoSymbolInput(s) => {
+            state.disasm_goto_sym = s;
+            Task::none()
+        }
+        Message::DisasmGotoSymbol(name) => {
+            if let Some(ref disasm) = state.disasm_state {
+                if let Some(sym) = disasm.find_symbol(&name) {
+                    let addr = sym.address;
+                    if let Some(off) = disasm.address_to_offset(addr) {
+                        state.disasm_offset = off;
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::DisasmBaseAddressInput(s) => {
+            state.disasm_base_addr_input = s;
+            Task::none()
+        }
+        Message::DisasmSetBaseAddress(addr_str) => {
+            let addr_str = addr_str.trim().trim_start_matches("0x").trim_start_matches("0X");
+            if let Ok(addr) = u64::from_str_radix(addr_str, 16) {
+                if let Some(ref mut disasm) = state.disasm_state {
+                    disasm.set_base_address(addr);
+                }
+            }
+            Task::none()
+        }
+        Message::DisasmSetArch(arch) => {
+            state.disasm_arch = arch;
+            if let Some(ref mut disasm) = state.disasm_state {
+                disasm.set_arch(arch);
+            }
+            Task::none()
+        }
+        Message::DisasmScroll(delta) => {
+            if let Some(ref disasm) = state.disasm_state {
+                if delta == i32::MIN {
+                    state.disasm_offset = 0;
+                } else {
+                    // Approximate: each instruction ~3 bytes average
+                    let byte_delta = (delta as i64) * 3;
+                    let new_off = state.disasm_offset as i64 + byte_delta;
+                    state.disasm_offset = new_off.max(0) as usize;
+                    if state.disasm_offset >= disasm.bytes().len() {
+                        state.disasm_offset = disasm.bytes().len().saturating_sub(1);
+                    }
+                }
+            }
             Task::none()
         }
 
@@ -2879,6 +2993,8 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // Build the main content area based on active viewer panels
     let main_area: Element<'_, Message> = if state.show_csv_viewer {
         super::csv_panel::view_csv_viewer(state, &state.theme)
+    } else if state.show_disasm {
+        super::disasm_panel::view_disasm_panel(state, &state.theme)
     } else if state.show_hex_viewer {
         super::hex_panel::view_hex_viewer(state, &state.theme)
     } else {
