@@ -345,6 +345,7 @@ pub struct NotepadIced {
     pub split_tab_contents: Vec<TabContent>,
     pub split_font_size: f32,
     pub split_file_extension: String,
+    pub split_show_markdown_preview: bool,
     pub active_pane: usize, // 0 = primary, 1 = secondary
 
     // Theme
@@ -423,6 +424,7 @@ impl Default for NotepadIced {
             split_tab_contents: vec![TabContent::new()],
             split_font_size: 14.0,
             split_file_extension: String::new(),
+            split_show_markdown_preview: false,
             active_pane: 0,
             theme,
         }
@@ -1154,6 +1156,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.split_tab_contents = vec![TabContent::new()];
             state.split_font_size = 14.0;
             state.split_file_extension.clear();
+            state.split_show_markdown_preview = false;
             state.active_pane = 0;
             Task::none()
         }
@@ -1249,7 +1252,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleMarkdownPreview => {
-            state.show_markdown_preview = !state.show_markdown_preview;
+            if state.active_pane == 0 {
+                state.show_markdown_preview = !state.show_markdown_preview;
+            } else {
+                state.split_show_markdown_preview = !state.split_show_markdown_preview;
+            }
             Task::none()
         }
         Message::ToggleCsvViewer => {
@@ -2053,14 +2060,49 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         // Normal editor, possibly with side panels
         let editor = view_editor(state);
 
+        // Wrap primary editor with its own markdown preview if enabled
+        let primary_with_md: Element<'_, Message> = if state.show_markdown_preview {
+            let primary_content = state
+                .tab_contents
+                .get(state.tab_manager.active_index())
+                .map(|tc| tc.content.text())
+                .unwrap_or_default();
+            row![
+                container(editor).width(Length::FillPortion(1)),
+                super::markdown_panel::view_markdown_preview_for_text(&primary_content, &state.theme),
+            ]
+            .height(Length::Fill)
+            .into()
+        } else {
+            editor
+        };
+
         // Wrap primary editor in mouse_area for active pane tracking
-        let primary_pane: Element<'_, Message> = mouse_area(editor)
+        let primary_pane: Element<'_, Message> = mouse_area(primary_with_md)
             .on_press(Message::SetActivePane(0))
             .into();
 
         // Wrap editor with split view if active
         let editor_area = if state.split_mode != SplitMode::None {
-            let split_pane = view_split_pane(state);
+            let split_editor = view_split_pane(state);
+
+            // Wrap split pane with its own markdown preview if enabled
+            let split_with_md: Element<'_, Message> = if state.split_show_markdown_preview {
+                let split_content = state
+                    .split_tab_contents
+                    .get(state.split_tab_manager.active_index())
+                    .map(|tc| tc.content.text())
+                    .unwrap_or_default();
+                row![
+                    container(split_editor).width(Length::FillPortion(1)),
+                    super::markdown_panel::view_markdown_preview_for_text(&split_content, &state.theme),
+                ]
+                .height(Length::Fill)
+                .into()
+            } else {
+                split_editor
+            };
+
             let border_color = state.theme.border;
             let divider = container(Space::new(
                 if state.split_mode == SplitMode::Horizontal { Length::Fixed(2.0) } else { Length::Fill },
@@ -2076,7 +2118,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                     row![
                         container(primary_pane).width(Length::FillPortion(1)).height(Length::Fill),
                         divider,
-                        container(split_pane).width(Length::FillPortion(1)).height(Length::Fill),
+                        container(split_with_md).width(Length::FillPortion(1)).height(Length::Fill),
                     ]
                     .height(Length::Fill)
                     .into()
@@ -2085,7 +2127,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
                     column![
                         container(primary_pane).width(Length::Fill).height(Length::FillPortion(1)),
                         divider,
-                        container(split_pane).width(Length::Fill).height(Length::FillPortion(1)),
+                        container(split_with_md).width(Length::Fill).height(Length::FillPortion(1)),
                     ]
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -2097,14 +2139,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             primary_pane
         };
 
-        if state.show_markdown_preview {
-            row![
-                container(editor_area).width(Length::FillPortion(1)),
-                super::markdown_panel::view_markdown_preview(state, &state.theme),
-            ]
-            .height(Length::Fill)
-            .into()
-        } else if state.show_function_list {
+        if state.show_function_list {
             row![
                 container(editor_area).width(Length::Fill),
                 super::function_list_panel::view_function_list(state, &state.theme),

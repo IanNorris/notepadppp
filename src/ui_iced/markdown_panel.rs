@@ -4,13 +4,7 @@ use iced::{Element, Font, Length, Theme};
 use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
 
-pub fn view_markdown_preview<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
-    let content_text = state
-        .tab_contents
-        .get(state.tab_manager.active_index())
-        .map(|tc| tc.content.text())
-        .unwrap_or_default();
-
+pub fn view_markdown_preview_for_text<'a>(content_text: &str, theme: &AppTheme) -> Element<'a, Message> {
     let header_bg = theme.tab_bar_bg;
     let text_color = theme.text;
     let header = container(
@@ -30,7 +24,7 @@ pub fn view_markdown_preview<'a>(state: &'a NotepadIced, theme: &AppTheme) -> El
     let accent = theme.accent;
     let code_bg = theme.background;
 
-    let rendered = render_markdown_content(&content_text, text_color, text_dim, accent, code_bg, border_color);
+    let rendered = render_markdown_content(content_text, text_color, text_dim, accent, code_bg, border_color);
 
     let body = scrollable(
         container(rendered).padding([8, 12]).width(Length::Fill),
@@ -52,6 +46,16 @@ pub fn view_markdown_preview<'a>(state: &'a NotepadIced, theme: &AppTheme) -> El
             ..Default::default()
         })
         .into()
+}
+
+pub fn view_markdown_preview<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let content_text = state
+        .tab_contents
+        .get(state.tab_manager.active_index())
+        .map(|tc| tc.content.text())
+        .unwrap_or_default();
+
+    view_markdown_preview_for_text(&content_text, theme)
 }
 
 fn render_markdown_content<'a>(
