@@ -96,67 +96,6 @@ fn test_keybinding_display() {
 }
 
 #[test]
-fn test_to_egui_key_letters() {
-    let b = KeyBinding::new("G", true, false, false);
-    assert_eq!(b.to_egui_key(), Some(egui::Key::G));
-}
-
-#[test]
-fn test_to_egui_key_function_keys() {
-    assert_eq!(KeyBinding::new("F2", false, false, false).to_egui_key(), Some(egui::Key::F2));
-    assert_eq!(KeyBinding::new("F3", false, false, false).to_egui_key(), Some(egui::Key::F3));
-}
-
-#[test]
-fn test_to_egui_key_special() {
-    assert_eq!(KeyBinding::new("Escape", false, false, false).to_egui_key(), Some(egui::Key::Escape));
-    assert_eq!(KeyBinding::new("]", false, false, false).to_egui_key(), Some(egui::Key::CloseBracket));
-    assert_eq!(KeyBinding::new("=", false, false, false).to_egui_key(), Some(egui::Key::Equals));
-    assert_eq!(KeyBinding::new("-", false, false, false).to_egui_key(), Some(egui::Key::Minus));
-    assert_eq!(KeyBinding::new("0", false, false, false).to_egui_key(), Some(egui::Key::Num0));
-}
-
-#[test]
-fn test_to_egui_key_unknown() {
-    assert_eq!(KeyBinding::new("INVALID", false, false, false).to_egui_key(), None);
-}
-
-#[test]
-fn test_matches() {
-    let kb = KeyBindings::defaults();
-    // Ctrl+N should match new_file
-    assert!(kb.matches(
-        "new_file",
-        egui::Key::N,
-        egui::Modifiers { ctrl: true, shift: false, alt: false, ..Default::default() }
-    ));
-    // Ctrl+Shift+S should match save_as
-    assert!(kb.matches(
-        "save_as",
-        egui::Key::S,
-        egui::Modifiers { ctrl: true, shift: true, alt: false, ..Default::default() }
-    ));
-    // Ctrl+S should NOT match save_as
-    assert!(!kb.matches(
-        "save_as",
-        egui::Key::S,
-        egui::Modifiers { ctrl: true, shift: false, alt: false, ..Default::default() }
-    ));
-    // Wrong key should not match
-    assert!(!kb.matches(
-        "new_file",
-        egui::Key::M,
-        egui::Modifiers { ctrl: true, shift: false, alt: false, ..Default::default() }
-    ));
-    // Unknown action should not match
-    assert!(!kb.matches(
-        "unknown_action",
-        egui::Key::N,
-        egui::Modifiers { ctrl: true, shift: false, alt: false, ..Default::default() }
-    ));
-}
-
-#[test]
 fn test_all_actions_sorted() {
     let kb = KeyBindings::defaults();
     let actions = kb.all_actions_sorted();

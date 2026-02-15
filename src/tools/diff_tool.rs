@@ -111,37 +111,3 @@ fn split_lines(text: &str) -> Vec<&str> {
     text.lines().collect()
 }
 
-/// Render a diff result in an egui UI with color-coded lines.
-#[cfg(feature = "_ui")]
-pub fn render_diff(ui: &mut egui::Ui, result: &DiffResult) {
-    use egui::{Color32, RichText};
-
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.label(
-            RichText::new(format!(
-                "Stats: {} same, {} added, {} removed, {} changed",
-                result.stats.same, result.stats.added, result.stats.removed, result.stats.changed
-            ))
-            .strong(),
-        );
-        ui.separator();
-
-        for line in &result.lines {
-            match line {
-                DiffLine::Same(text) => {
-                    ui.label(format!("  {text}"));
-                }
-                DiffLine::Added(text) => {
-                    ui.label(RichText::new(format!("+ {text}")).color(Color32::from_rgb(80, 200, 80)));
-                }
-                DiffLine::Removed(text) => {
-                    ui.label(RichText::new(format!("- {text}")).color(Color32::from_rgb(220, 80, 80)));
-                }
-                DiffLine::Changed { old, new } => {
-                    ui.label(RichText::new(format!("- {old}")).color(Color32::from_rgb(220, 180, 60)));
-                    ui.label(RichText::new(format!("+ {new}")).color(Color32::from_rgb(220, 180, 60)));
-                }
-            }
-        }
-    });
-}

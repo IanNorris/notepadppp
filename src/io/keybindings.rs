@@ -20,76 +20,6 @@ impl KeyBinding {
         }
     }
 
-    /// Convert string key name to egui::Key
-    pub fn to_egui_key(&self) -> Option<egui::Key> {
-        match self.key.as_str() {
-            "A" => Some(egui::Key::A),
-            "B" => Some(egui::Key::B),
-            "C" => Some(egui::Key::C),
-            "D" => Some(egui::Key::D),
-            "E" => Some(egui::Key::E),
-            "F" => Some(egui::Key::F),
-            "G" => Some(egui::Key::G),
-            "H" => Some(egui::Key::H),
-            "I" => Some(egui::Key::I),
-            "J" => Some(egui::Key::J),
-            "K" => Some(egui::Key::K),
-            "L" => Some(egui::Key::L),
-            "M" => Some(egui::Key::M),
-            "N" => Some(egui::Key::N),
-            "O" => Some(egui::Key::O),
-            "P" => Some(egui::Key::P),
-            "Q" => Some(egui::Key::Q),
-            "R" => Some(egui::Key::R),
-            "S" => Some(egui::Key::S),
-            "T" => Some(egui::Key::T),
-            "U" => Some(egui::Key::U),
-            "V" => Some(egui::Key::V),
-            "W" => Some(egui::Key::W),
-            "X" => Some(egui::Key::X),
-            "Y" => Some(egui::Key::Y),
-            "Z" => Some(egui::Key::Z),
-            "0" => Some(egui::Key::Num0),
-            "1" => Some(egui::Key::Num1),
-            "2" => Some(egui::Key::Num2),
-            "3" => Some(egui::Key::Num3),
-            "4" => Some(egui::Key::Num4),
-            "5" => Some(egui::Key::Num5),
-            "6" => Some(egui::Key::Num6),
-            "7" => Some(egui::Key::Num7),
-            "8" => Some(egui::Key::Num8),
-            "9" => Some(egui::Key::Num9),
-            "F1" => Some(egui::Key::F1),
-            "F2" => Some(egui::Key::F2),
-            "F3" => Some(egui::Key::F3),
-            "F4" => Some(egui::Key::F4),
-            "F5" => Some(egui::Key::F5),
-            "F6" => Some(egui::Key::F6),
-            "F7" => Some(egui::Key::F7),
-            "F8" => Some(egui::Key::F8),
-            "F9" => Some(egui::Key::F9),
-            "F10" => Some(egui::Key::F10),
-            "F11" => Some(egui::Key::F11),
-            "F12" => Some(egui::Key::F12),
-            "Escape" => Some(egui::Key::Escape),
-            "Enter" => Some(egui::Key::Enter),
-            "Tab" => Some(egui::Key::Tab),
-            "Space" => Some(egui::Key::Space),
-            "Backspace" => Some(egui::Key::Backspace),
-            "Delete" => Some(egui::Key::Delete),
-            "=" => Some(egui::Key::Equals),
-            "-" => Some(egui::Key::Minus),
-            "]" => Some(egui::Key::CloseBracket),
-            "[" => Some(egui::Key::OpenBracket),
-            "/" => Some(egui::Key::Slash),
-            "ArrowUp" => Some(egui::Key::ArrowUp),
-            "ArrowDown" => Some(egui::Key::ArrowDown),
-            "ArrowLeft" => Some(egui::Key::ArrowLeft),
-            "ArrowRight" => Some(egui::Key::ArrowRight),
-            _ => None,
-        }
-    }
-
     /// Display human-readable shortcut string
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
@@ -192,22 +122,6 @@ impl KeyBindings {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("notepadppp")
             .join("keybindings.json")
-    }
-
-    /// Check if a key+modifiers match the binding for the named action
-    pub fn matches(&self, action: &str, key: egui::Key, modifiers: egui::Modifiers) -> bool {
-        if let Some(binding) = self.bindings.get(action) {
-            if let Some(egui_key) = binding.to_egui_key() {
-                egui_key == key
-                    && binding.ctrl == modifiers.ctrl
-                    && binding.shift == modifiers.shift
-                    && binding.alt == modifiers.alt
-            } else {
-                false
-            }
-        } else {
-            false
-        }
     }
 
     /// Returns human-readable shortcut string like "Ctrl+G"

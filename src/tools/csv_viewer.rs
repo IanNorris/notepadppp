@@ -1,6 +1,3 @@
-use egui::{self, Color32, RichText, Ui};
-use egui_extras::{Column, TableBuilder};
-
 /// Parsed CSV data with headers, rows, and configuration.
 pub struct CsvData {
     pub headers: Vec<String>,
@@ -198,71 +195,3 @@ pub fn remove_column(data: &mut CsvData, col: usize) {
     }
 }
 
-/// Render CSV data as an interactive egui table.
-pub fn render_csv_table(ui: &mut Ui, data: &mut CsvData) {
-    if data.headers.is_empty() {
-        ui.label("No CSV data to display.");
-        return;
-    }
-
-    let col_count = data.headers.len();
-    let col_width = 120.0;
-
-    let mut sort_request: Option<(usize, bool)> = None;
-
-    let _available_height = ui.available_height();
-
-    let mut table = TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
-
-    // Row number column
-    table = table.column(Column::exact(50.0));
-
-    // Data columns
-    for _ in 0..col_count {
-        table = table.column(Column::initial(col_width).at_least(60.0));
-    }
-
-    table
-        .header(24.0, |mut header| {
-            // Row number header
-            header.col(|ui| {
-                ui.label(RichText::new("#").strong());
-            });
-            // Data column headers (clickable to sort)
-            for (i, h) in data.headers.iter().enumerate() {
-                header.col(|ui| {
-                    if ui.button(RichText::new(h.as_str()).strong()).clicked() {
-                        sort_request = Some((i, true));
-                    }
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(20.0, data.rows.len(), |mut row| {
-                let row_idx = row.index();
-                // Row number
-                row.col(|ui| {
-                    ui.label(
-                        RichText::new((row_idx + 1).to_string())
-                            .color(Color32::GRAY),
-                    );
-                });
-                // Data cells
-                for col_idx in 0..col_count {
-                    row.col(|ui| {
-                        if let Some(cell) = data.rows.get_mut(row_idx).and_then(|r| r.get_mut(col_idx)) {
-                            ui.text_edit_singleline(cell);
-                        }
-                    });
-                }
-            });
-        });
-
-    // Apply sort if requested
-    if let Some((col, asc)) = sort_request {
-        sort_by_column(data, col, asc);
-    }
-}
