@@ -369,6 +369,25 @@ fn build_tools_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collect
         menu_item("Hex Decode", "", Message::MimeHexDecode, t),
     ], t);
     items.push(separator(t));
+    push_submenu(&mut items, "Hash & Encode", expanded, vec![
+        menu_item("SHA-256", "", Message::HashSha256, t),
+        menu_item("SHA-1", "", Message::HashSha1, t),
+        menu_item("MD5", "", Message::HashMd5, t),
+        menu_item("CRC32", "", Message::HashCrc32, t),
+        separator(t),
+        menu_item("Base64 Encode", "", Message::MimeBase64Encode, t),
+        menu_item("Base64 Decode", "", Message::MimeBase64Decode, t),
+        separator(t),
+        menu_item("URL Encode", "", Message::MimeUrlEncode, t),
+        menu_item("URL Decode", "", Message::MimeUrlDecode, t),
+        separator(t),
+        menu_item("Hex Encode", "", Message::MimeHexEncode, t),
+        menu_item("Hex Decode", "", Message::MimeHexDecode, t),
+        separator(t),
+        menu_item("HTML Entity Encode", "", Message::MimeHtmlEncode, t),
+        menu_item("HTML Entity Decode", "", Message::MimeHtmlDecode, t),
+    ], t);
+    items.push(separator(t));
     items.push(menu_item("Compare Files...", "", Message::CompareFiles, t));
     items.push(check_item("Hex Viewer", state.show_hex_viewer, Message::ToggleHexViewer, t));
     items

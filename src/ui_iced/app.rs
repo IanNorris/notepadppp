@@ -181,6 +181,14 @@ pub enum Message {
     MimeHexDecode,
     CompareFiles,
     ToggleHexViewer,
+    HashSha256,
+    HashSha1,
+    HashMd5,
+    HashCrc32,
+
+    // Editor context menu
+    EditorContextMenu,
+    CloseEditorContextMenu,
 
     // Split pane
     SplitEditorAction(text_editor::Action),
@@ -472,6 +480,12 @@ pub struct NotepadIced {
     // Search results panel
     pub show_search_results_panel: bool,
     pub search_results_panel: SearchResultsManager,
+
+    // Editor context menu (right-click on text area)
+    pub editor_context_menu: bool,
+
+    // Status bar message (transient feedback)
+    pub status_message: Option<(String, std::time::Instant)>,
 }
 
 impl Default for NotepadIced {
@@ -570,6 +584,8 @@ impl Default for NotepadIced {
             mark_manager: MarkManager::default(),
             show_search_results_panel: false,
             search_results_panel: SearchResultsManager::default(),
+            editor_context_menu: false,
+            status_message: None,
         };
 
         // Apply CLI arguments if provided
@@ -730,6 +746,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::MiddleClickTab(_, _)
             | Message::TabDragStart(_, _) | Message::TabDragOver(_, _)
             | Message::TabDragEnd | Message::TabDragCancel
+            | Message::EditorContextMenu | Message::CloseEditorContextMenu
     );
     if should_close_menu {
         state.active_menu = None;
@@ -1547,47 +1564,106 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::MimeBase64Encode => {
+            state.editor_context_menu = false;
             apply_text_transform(state, crate::tools::mime_tools::base64_encode);
+            state.status_message = Some(("Base64 Encoded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::MimeBase64Decode => {
+            state.editor_context_menu = false;
             let text = get_buffer_text(state);
             match crate::tools::mime_tools::base64_decode(&text) {
-                Ok(decoded) => set_buffer_text(state, &decoded),
-                Err(e) => log::error!("Base64 decode error: {}", e),
+                Ok(decoded) => {
+                    set_buffer_text(state, &decoded);
+                    state.status_message = Some(("Base64 Decoded".to_string(), std::time::Instant::now()));
+                }
+                Err(e) => {
+                    state.status_message = Some((format!("Base64 decode error: {e}"), std::time::Instant::now()));
+                    log::error!("Base64 decode error: {}", e);
+                }
             }
             Task::none()
         }
         Message::MimeUrlEncode => {
+            state.editor_context_menu = false;
             apply_text_transform(state, crate::tools::mime_tools::url_encode);
+            state.status_message = Some(("URL Encoded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::MimeUrlDecode => {
+            state.editor_context_menu = false;
             let text = get_buffer_text(state);
             match crate::tools::mime_tools::url_decode(&text) {
-                Ok(decoded) => set_buffer_text(state, &decoded),
-                Err(e) => log::error!("URL decode error: {}", e),
+                Ok(decoded) => {
+                    set_buffer_text(state, &decoded);
+                    state.status_message = Some(("URL Decoded".to_string(), std::time::Instant::now()));
+                }
+                Err(e) => {
+                    state.status_message = Some((format!("URL decode error: {e}"), std::time::Instant::now()));
+                    log::error!("URL decode error: {}", e);
+                }
             }
             Task::none()
         }
         Message::MimeHtmlEncode => {
+            state.editor_context_menu = false;
             apply_text_transform(state, crate::tools::mime_tools::html_entity_encode);
+            state.status_message = Some(("HTML Entity Encoded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::MimeHtmlDecode => {
+            state.editor_context_menu = false;
             apply_text_transform(state, crate::tools::mime_tools::html_entity_decode);
+            state.status_message = Some(("HTML Entity Decoded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::MimeHexEncode => {
+            state.editor_context_menu = false;
             apply_text_transform(state, crate::tools::mime_tools::hex_encode);
+            state.status_message = Some(("Hex Encoded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::MimeHexDecode => {
+            state.editor_context_menu = false;
             let text = get_buffer_text(state);
             match crate::tools::mime_tools::hex_decode(&text) {
-                Ok(decoded) => set_buffer_text(state, &decoded),
-                Err(e) => log::error!("Hex decode error: {}", e),
+                Ok(decoded) => {
+                    set_buffer_text(state, &decoded);
+                    state.status_message = Some(("Hex Decoded".to_string(), std::time::Instant::now()));
+                }
+                Err(e) => {
+                    state.status_message = Some((format!("Hex decode error: {e}"), std::time::Instant::now()));
+                    log::error!("Hex decode error: {}", e);
+                }
             }
+            Task::none()
+        }
+        Message::HashSha256 => {
+            state.editor_context_menu = false;
+            apply_hash_transform(state, "SHA-256", crate::tools::hash_tools::sha256);
+            Task::none()
+        }
+        Message::HashSha1 => {
+            state.editor_context_menu = false;
+            apply_hash_transform(state, "SHA-1", crate::tools::hash_tools::sha1);
+            Task::none()
+        }
+        Message::HashMd5 => {
+            state.editor_context_menu = false;
+            apply_hash_transform(state, "MD5", crate::tools::hash_tools::md5);
+            Task::none()
+        }
+        Message::HashCrc32 => {
+            state.editor_context_menu = false;
+            apply_hash_transform(state, "CRC32", crate::tools::hash_tools::crc32);
+            Task::none()
+        }
+        Message::EditorContextMenu => {
+            state.editor_context_menu = true;
+            Task::none()
+        }
+        Message::CloseEditorContextMenu => {
+            state.editor_context_menu = false;
             Task::none()
         }
         Message::CompareFiles => {
@@ -2154,7 +2230,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Keyboard ──
         Message::EscapePressed => {
-            if state.tab_rename.is_some() {
+            if state.editor_context_menu {
+                state.editor_context_menu = false;
+            } else if state.tab_rename.is_some() {
                 state.tab_rename = None;
             } else if state.tab_context_menu.is_some() {
                 state.tab_context_menu = None;
@@ -2824,9 +2902,10 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             editor
         };
 
-        // Wrap primary editor in mouse_area for active pane tracking
+        // Wrap primary editor in mouse_area for active pane tracking + right-click context menu
         let primary_pane: Element<'_, Message> = mouse_area(primary_with_md)
             .on_press(Message::SetActivePane(0))
+            .on_right_press(Message::EditorContextMenu)
             .into();
 
         // Wrap editor with split view if active
@@ -2927,8 +3006,9 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     let has_dropdown = state.active_menu.is_some();
     let has_floating = state.show_find || state.show_goto_line || state.show_about || state.show_find_in_files || state.show_preferences || state.show_keybindings;
     let has_context_menu = state.tab_context_menu.is_some();
+    let has_editor_context_menu = state.editor_context_menu;
 
-    if !has_dropdown && !has_floating && !has_context_menu {
+    if !has_dropdown && !has_floating && !has_context_menu && !has_editor_context_menu {
         return base;
     }
 
@@ -3562,6 +3642,110 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
         layers.push(rename_overlay);
     }
 
+    // Editor context menu (right-click on text area)
+    if state.editor_context_menu {
+        let click_catcher: Element<'_, Message> = mouse_area(
+            container(Space::new(Length::Fill, Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press(Message::CloseEditorContextMenu)
+        .into();
+        layers.push(click_catcher);
+
+        let t_menu_bg = state.theme.menu_bg;
+        let t_menu_hover = state.theme.menu_hover;
+        let t_text = state.theme.text;
+        let t_text_dim = state.theme.text_dim;
+        let t_border = state.theme.border;
+
+        let has_selection = state
+            .tab_contents
+            .get(state.tab_manager.active_index())
+            .and_then(|tc| tc.content.selection())
+            .is_some();
+
+        let ctx_btn = |label: &'static str, msg: Message, enabled: bool| -> Element<'_, Message> {
+            let b = button(text(label).size(13).color(if enabled { t_text } else { t_text_dim }))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed if enabled => {
+                            Some(iced::Background::Color(t_menu_hover))
+                        }
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: if enabled { t_text } else { t_text_dim },
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                });
+            if enabled { b.on_press(msg).into() } else { b.into() }
+        };
+
+        let ctx_sep = || -> Element<'_, Message> {
+            container(Space::new(Length::Fill, Length::Fixed(1.0)))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_border)),
+                    ..Default::default()
+                })
+                .padding([2, 4])
+                .into()
+        };
+
+        let mut items: Vec<Element<'_, Message>> = Vec::new();
+
+        // Hash submenu items
+        items.push(ctx_btn("SHA-256", Message::HashSha256, has_selection));
+        items.push(ctx_btn("SHA-1", Message::HashSha1, has_selection));
+        items.push(ctx_btn("MD5", Message::HashMd5, has_selection));
+        items.push(ctx_btn("CRC32", Message::HashCrc32, has_selection));
+        items.push(ctx_sep());
+
+        // Encode submenu items
+        items.push(ctx_btn("Base64 Encode", Message::MimeBase64Encode, has_selection));
+        items.push(ctx_btn("Base64 Decode", Message::MimeBase64Decode, has_selection));
+        items.push(ctx_sep());
+        items.push(ctx_btn("URL Encode", Message::MimeUrlEncode, has_selection));
+        items.push(ctx_btn("URL Decode", Message::MimeUrlDecode, has_selection));
+        items.push(ctx_sep());
+        items.push(ctx_btn("Hex Encode", Message::MimeHexEncode, has_selection));
+        items.push(ctx_btn("Hex Decode", Message::MimeHexDecode, has_selection));
+        items.push(ctx_sep());
+        items.push(ctx_btn("HTML Entity Encode", Message::MimeHtmlEncode, has_selection));
+        items.push(ctx_btn("HTML Entity Decode", Message::MimeHtmlDecode, has_selection));
+
+        let context_menu = container(
+            column(items).spacing(0).padding(4).width(Length::Fixed(200.0)),
+        )
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_menu_bg)),
+            border: iced::Border {
+                color: t_border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                offset: iced::Vector::new(2.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+        let editor_ctx_overlay: Element<'_, Message> = container(opaque(context_menu))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into();
+
+        layers.push(editor_ctx_overlay);
+    }
+
     stack(layers).into()
 }
 
@@ -3752,6 +3936,24 @@ fn apply_text_transform(state: &mut NotepadIced, transform: impl FnOnce(&str) ->
     let text = get_buffer_text(state);
     let new_text = transform(&text);
     set_buffer_text(state, &new_text);
+}
+
+/// Apply a hash function to selected text (or full buffer) and replace with result.
+fn apply_hash_transform(state: &mut NotepadIced, label: &str, hash_fn: fn(&[u8]) -> String) {
+    if state.tab_manager.active_document().read_only {
+        return;
+    }
+    let active = state.tab_manager.active_index();
+    let selected = state.tab_contents.get(active).and_then(|tc| tc.content.selection());
+    let input = selected.unwrap_or_else(|| get_buffer_text(state));
+    let result = hash_fn(input.as_bytes());
+    let display = if result.len() > 40 {
+        format!("{}: {}…", label, &result[..40])
+    } else {
+        format!("{}: {}", label, result)
+    };
+    state.status_message = Some((display, std::time::Instant::now()));
+    set_buffer_text(state, &result);
 }
 
 fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
@@ -4370,6 +4572,15 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     if is_read_only {
         status_string.push_str("    [READ ONLY]");
     }
+
+    // Show transient status message (auto-expires after 5 seconds)
+    if let Some((ref msg, instant)) = state.status_message {
+        if instant.elapsed().as_secs() < 5 {
+            status_string.push_str("    ");
+            status_string.push_str(msg);
+        }
+    }
+
     let status_text = text(status_string).size(12);
 
     container(status_text)
