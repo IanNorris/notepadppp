@@ -1,5 +1,6 @@
 use iced::keyboard;
 use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, Space};
+use iced::advanced::text::Wrapping;
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Encoding, LineEnding};
@@ -1715,10 +1716,17 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let active = state.tab_manager.active_index();
 
     if let Some(tc) = state.tab_contents.get(active) {
+        let wrapping = if state.word_wrap {
+            Wrapping::Word
+        } else {
+            Wrapping::None
+        };
+
         let editor = text_editor(&tc.content)
             .on_action(Message::EditorAction)
             .size(state.font_size)
             .height(Length::Fill)
+            .wrapping(wrapping)
             .highlight_with::<SyntectHighlighter>(
                 SyntectSettings {
                     extension: state.file_extension.clone(),
@@ -1727,14 +1735,52 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 |highlight, _theme| highlight.to_format(),
             );
 
-        container(editor)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(AppColors::BACKGROUND)),
-                ..Default::default()
-            })
-            .into()
+        if state.show_line_numbers {
+            let content_text = tc.content.text();
+            let line_count = content_text.lines().count().max(1);
+            let gutter_width = 40.0;
+
+            let mut gutter_col = column![];
+            for i in 1..=line_count {
+                gutter_col = gutter_col.push(
+                    container(
+                        text(format!("{}", i))
+                            .size(state.font_size)
+                            .color(AppColors::TEXT_DIM),
+                    )
+                    .width(Length::Fixed(gutter_width))
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .padding([0, 4]),
+                );
+            }
+
+            let gutter = container(scrollable(gutter_col))
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                });
+
+            let editor_row = row![gutter, editor].height(Length::Fill);
+
+            container(editor_row)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            container(editor)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(AppColors::BACKGROUND)),
+                    ..Default::default()
+                })
+                .into()
+        }
     } else {
         container(text("No document open"))
             .width(Length::Fill)
@@ -1784,8 +1830,9 @@ fn view_status_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         };
 
     let status_text = text(format!(
-        "  Ln {}, Col {}    {}    {}    {}",
-        line, col, encoding_str, line_ending_str, language
+        "  Ln {}, Col {}    {}    {}    {}{}",
+        line, col, encoding_str, line_ending_str, language,
+        if state.show_whitespace { "    WS" } else { "" }
     ))
     .size(12);
 
