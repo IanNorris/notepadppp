@@ -2794,7 +2794,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     let has_split = state.split_mode != SplitMode::None;
 
-    let mut tabs = row![].spacing(1).padding([1, 2]);
+    let mut tabs = row![].spacing(1).padding([1, 2]).align_y(iced::Alignment::Center);
 
     for i in 0..count {
         let tab_title = state.tab_manager.get_tab_title(i);
@@ -2859,7 +2859,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         tabs = tabs.push(tab_with_context);
     }
 
-    // "+" add-tab button
+    // "+" add-tab button with gap from tabs
     let t_border = state.theme.border;
     let t_button_bg = state.theme.button_bg;
     let add_btn = button(text("+").size(14))
@@ -2881,6 +2881,7 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             }
         });
+    tabs = tabs.push(iced::widget::horizontal_space().width(4));
     tabs = tabs.push(add_btn);
 
     container(tabs)
@@ -3004,7 +3005,7 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let count = state.split_tab_manager.tab_count();
     let active = state.split_tab_manager.active_index();
 
-    let mut tabs = row![].spacing(1).padding([1, 2]);
+    let mut tabs = row![].spacing(1).padding([1, 2]).align_y(iced::Alignment::Center);
 
     for i in 0..count {
         let tab_title = state.split_tab_manager.get_tab_title(i);
@@ -3064,7 +3065,7 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         tabs = tabs.push(tab_with_context);
     }
 
-    // "+" add-tab button
+    // "+" add-tab button with gap from tabs
     let t_border = state.theme.border;
     let t_button_bg = state.theme.button_bg;
     let add_btn = button(text("+").size(14))
@@ -3086,6 +3087,7 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             }
         });
+    tabs = tabs.push(iced::widget::horizontal_space().width(4));
     tabs = tabs.push(add_btn);
 
     container(tabs)
