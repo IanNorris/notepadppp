@@ -2,35 +2,40 @@ use iced::widget::{button, column, container, text, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::Message;
-use super::theme::AppColors;
+use super::theme::AppTheme;
 
-const DIALOG_BG: iced::Color = iced::Color::from_rgb(0.18, 0.18, 0.22);
+pub fn view_about_dialog<'a>(theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_text_dim = theme.text_dim;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
+    let t_dialog_bg = theme.dialog_bg;
+    let t_border = theme.border;
 
-pub fn view_about_dialog<'a>() -> Element<'a, Message> {
     let content = column![
-        text("Notepad+++").size(22).color(AppColors::TEXT),
+        text("Notepad+++").size(22).color(t_text),
         text(format!("Version {}", env!("CARGO_PKG_VERSION")))
             .size(13)
-            .color(AppColors::TEXT_DIM),
+            .color(t_text_dim),
         Space::with_height(8),
         text("A fast, native text editor for programmers")
             .size(13)
-            .color(AppColors::TEXT),
+            .color(t_text),
         text("Built with Rust + Iced")
             .size(13)
-            .color(AppColors::TEXT_DIM),
+            .color(t_text_dim),
         Space::with_height(12),
         button(text("Close").size(13))
             .on_press(Message::CloseAbout)
             .padding([4, 20])
-            .style(|_theme: &Theme, status| {
+            .style(move |_theme: &Theme, status| {
                 let bg = match status {
-                    button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                    _ => iced::Color::from_rgb(0.25, 0.25, 0.30),
+                    button::Status::Hovered | button::Status::Pressed => t_accent,
+                    _ => t_button_bg,
                 };
                 button::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: AppColors::TEXT,
+                    text_color: t_text,
                     border: iced::Border {
                         radius: 3.0.into(),
                         ..Default::default()
@@ -45,10 +50,10 @@ pub fn view_about_dialog<'a>() -> Element<'a, Message> {
 
     container(content)
         .width(Length::Fixed(320.0))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(DIALOG_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_dialog_bg)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.30, 0.30, 0.35),
+                color: t_border,
                 width: 1.0,
                 radius: 0.0.into(),
             },

@@ -347,14 +347,19 @@ pub struct NotepadIced {
 
 impl Default for NotepadIced {
     fn default() -> Self {
+        let settings = crate::io::settings::AppSettings::load(
+            &crate::io::settings::AppSettings::settings_path(),
+        )
+        .unwrap_or_default();
+        let theme = AppColors::theme_by_name(&settings.theme);
         Self {
             tab_manager: TabManager::new(),
             tab_contents: vec![TabContent::new()],
             active_menu: None,
             expanded_submenus: std::collections::HashSet::new(),
-            word_wrap: false,
-            show_line_numbers: true,
-            show_whitespace: false,
+            word_wrap: settings.word_wrap,
+            show_line_numbers: settings.show_line_numbers,
+            show_whitespace: settings.show_whitespace,
             show_status_bar: true,
             show_minimap: false,
             show_function_list: false,
@@ -378,19 +383,19 @@ impl Default for NotepadIced {
             goto_line_input: String::new(),
             show_about: false,
             show_preferences: false,
-            pref_font_size: 14.0,
-            pref_tab_size: String::from("4"),
-            pref_theme: String::from("base16-ocean.dark"),
-            pref_auto_save: false,
-            pref_word_wrap: false,
-            pref_show_line_numbers: true,
-            pref_show_whitespace: false,
+            pref_font_size: settings.font_size,
+            pref_tab_size: settings.tab_size.to_string(),
+            pref_theme: settings.theme.clone(),
+            pref_auto_save: settings.auto_save,
+            pref_word_wrap: settings.word_wrap,
+            pref_show_line_numbers: settings.show_line_numbers,
+            pref_show_whitespace: settings.show_whitespace,
             show_keybindings: false,
             find_panel_pos: None, // None = right-aligned default
             dragging_find_panel: false,
             drag_offset: (0.0, 0.0),
             last_mouse_pos: iced::Point::ORIGIN,
-            font_size: 14.0,
+            font_size: settings.font_size,
             macro_recorder: MacroRecorder::new(),
             last_macro: None,
             file_extension: String::new(),
@@ -413,7 +418,7 @@ impl Default for NotepadIced {
             split_font_size: 14.0,
             split_file_extension: String::new(),
             active_pane: 0,
-            theme: AppTheme::dark(),
+            theme,
         }
     }
 }
@@ -2062,7 +2067,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             layers.push(drag_tracker);
         }
 
-        let search_widget = opaque(super::search_panel::view_search_panel(state));
+        let search_widget = opaque(super::search_panel::view_search_panel(state, &state.theme));
 
         let search_overlay: Element<'_, Message> = match state.find_panel_pos {
             Some((x, y)) => {
@@ -2125,7 +2130,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // Go to Line — floating non-modal, centered
     if state.show_goto_line {
         let goto_overlay: Element<'_, Message> = container(
-            opaque(super::goto_dialog::view_goto_dialog(state)),
+            opaque(super::goto_dialog::view_goto_dialog(state, &state.theme)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2139,7 +2144,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // About — floating non-modal, centered
     if state.show_about {
         let about_overlay: Element<'_, Message> = container(
-            opaque(super::about_dialog::view_about_dialog()),
+            opaque(super::about_dialog::view_about_dialog(&state.theme)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2153,7 +2158,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // Preferences — floating centered
     if state.show_preferences {
         let pref_overlay: Element<'_, Message> = container(
-            opaque(super::preferences_dialog::view_preferences_dialog(state)),
+            opaque(super::preferences_dialog::view_preferences_dialog(state, &state.theme)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2167,7 +2172,7 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     // Keybindings — floating centered
     if state.show_keybindings {
         let kb_overlay: Element<'_, Message> = container(
-            opaque(super::keybindings_dialog::view_keybindings_dialog()),
+            opaque(super::keybindings_dialog::view_keybindings_dialog(&state.theme)),
         )
         .width(Length::Fill)
         .height(Length::Fill)

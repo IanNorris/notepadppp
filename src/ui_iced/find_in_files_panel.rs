@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, mouse_area, row, scrollable, text, text_input, Space};
-use iced::{Color, Element, Length, Theme};
+use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
@@ -7,18 +7,17 @@ use super::theme::AppTheme;
 pub fn view_find_in_files_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
     let panel_bg = theme.dialog_bg;
     let title_bar_bg = theme.background;
-    let toggle_on = theme.accent;
-    let toggle_off = theme.button_bg;
     let match_bg = theme.menu_bg;
     let match_hover = theme.menu_hover;
     let file_header_bg = theme.tab_bar_bg;
     let text_color = theme.text;
     let text_dim = theme.text_dim;
+    let t_border = theme.border;
     // Draggable title bar
     let title_bar_content = row![
         text("Find in Files").size(13).color(text_color),
         Space::with_width(Length::Fill),
-        nav_button("x", Message::CloseFindInFiles, toggle_off, text_color),
+        nav_button("x", Message::CloseFindInFiles, theme),
     ]
     .align_y(iced::Alignment::Center)
     .padding([4, 8]);
@@ -83,16 +82,14 @@ pub fn view_find_in_files_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> El
     .padding([2, 8]);
 
     // Toggle buttons and search button
-    let recursive_btn = toggle_button("Recursive", state.fif_recursive, Message::FifToggleRecursive, toggle_on, toggle_off, text_color);
-    let case_btn = toggle_button("Aa", state.fif_case_sensitive, Message::FifToggleCaseSensitive, toggle_on, toggle_off, text_color);
-    let regex_btn = toggle_button(".*", state.fif_use_regex, Message::FifToggleRegex, toggle_on, toggle_off, text_color);
+    let recursive_btn = toggle_button("Recursive", state.fif_recursive, Message::FifToggleRecursive, theme);
+    let case_btn = toggle_button("Aa", state.fif_case_sensitive, Message::FifToggleCaseSensitive, theme);
+    let regex_btn = toggle_button(".*", state.fif_use_regex, Message::FifToggleRegex, theme);
 
     let search_btn = action_button(
         if state.fif_searching { "Searching..." } else { "Search" },
         Message::FifSearch,
-        toggle_on,
-        toggle_off,
-        text_color,
+        theme,
     );
 
     let options_row = row![
@@ -194,7 +191,7 @@ pub fn view_find_in_files_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> El
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(panel_bg)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.35, 0.35, 0.40),
+                color: t_border,
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -208,14 +205,15 @@ pub fn view_find_in_files_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> El
         .into()
 }
 
-fn toggle_button<'a>(label: &str, active: bool, msg: Message, toggle_on: Color, toggle_off: Color, text_color: Color) -> Element<'a, Message> {
-    let bg = if active { toggle_on } else { toggle_off };
+fn toggle_button<'a>(label: &str, active: bool, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let bg = if active { theme.accent } else { theme.button_bg };
     button(text(label.to_string()).size(12))
         .on_press(msg)
         .padding([3, 6])
         .style(move |_theme: &Theme, _status| button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color,
+            text_color: t_text,
             border: iced::Border {
                 radius: 3.0.into(),
                 ..Default::default()
@@ -225,20 +223,22 @@ fn toggle_button<'a>(label: &str, active: bool, msg: Message, toggle_on: Color, 
         .into()
 }
 
-fn nav_button<'a>(label: &str, msg: Message, toggle_off: Color, text_color: Color) -> Element<'a, Message> {
+fn nav_button<'a>(label: &str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_button_bg = theme.button_bg;
     button(text(label.to_string()).size(14))
         .on_press(msg)
         .padding([2, 6])
         .style(move |_theme: &Theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => {
-                    Some(iced::Background::Color(toggle_off))
+                    Some(iced::Background::Color(t_button_bg))
                 }
                 _ => None,
             };
             button::Style {
                 background: bg,
-                text_color,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -249,18 +249,21 @@ fn nav_button<'a>(label: &str, msg: Message, toggle_off: Color, text_color: Colo
         .into()
 }
 
-fn action_button<'a>(label: &str, msg: Message, toggle_on: Color, toggle_off: Color, text_color: Color) -> Element<'a, Message> {
+fn action_button<'a>(label: &str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
     button(text(label.to_string()).size(12))
         .on_press(msg)
         .padding([3, 8])
         .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => toggle_on,
-                _ => toggle_off,
+                button::Status::Hovered | button::Status::Pressed => t_accent,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()

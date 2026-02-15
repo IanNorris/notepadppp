@@ -2,13 +2,16 @@ use iced::widget::{button, column, container, row, text, text_input, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
-use super::theme::AppColors;
+use super::theme::AppTheme;
 
-const DIALOG_BG: iced::Color = iced::Color::from_rgb(0.18, 0.18, 0.22);
-const BUTTON_BG: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
+pub fn view_goto_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
+    let t_dialog_bg = theme.dialog_bg;
+    let t_border = theme.border;
 
-pub fn view_goto_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
-    let label = text("Go to Line:").size(14).color(AppColors::TEXT);
+    let label = text("Go to Line:").size(14).color(t_text);
 
     let input = text_input("Line number", &state.goto_line_input)
         .on_input(Message::GotoLineInputChanged)
@@ -19,14 +22,14 @@ pub fn view_goto_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
     let go_btn = button(text("Go").size(13))
         .on_press(Message::GotoLineConfirm)
         .padding([4, 16])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                _ => BUTTON_BG,
+                button::Status::Hovered | button::Status::Pressed => t_accent,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -35,19 +38,18 @@ pub fn view_goto_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
             }
         });
 
+    let t_menu_hover = theme.menu_hover;
     let cancel_btn = button(text("Cancel").size(13))
         .on_press(Message::GotoLineClose)
         .padding([4, 12])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => {
-                    iced::Color::from_rgb(0.30, 0.30, 0.35)
-                }
-                _ => BUTTON_BG,
+                button::Status::Hovered | button::Status::Pressed => t_menu_hover,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -67,10 +69,10 @@ pub fn view_goto_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
 
     container(content)
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(DIALOG_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_dialog_bg)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.30, 0.30, 0.35),
+                color: t_border,
                 width: 1.0,
                 radius: 0.0.into(),
             },

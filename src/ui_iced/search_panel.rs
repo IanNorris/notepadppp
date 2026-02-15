@@ -2,16 +2,17 @@ use iced::widget::{button, column, container, mouse_area, row, scrollable, text,
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
-use super::theme::AppColors;
+use super::theme::AppTheme;
 
-const PANEL_BG: iced::Color = iced::Color::from_rgb(0.16, 0.16, 0.20);
-const TITLE_BAR_BG: iced::Color = iced::Color::from_rgb(0.13, 0.13, 0.17);
-const TOGGLE_ON: iced::Color = iced::Color::from_rgb(0.0, 0.47, 0.84);
-const TOGGLE_OFF: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
-const MATCH_BG: iced::Color = iced::Color::from_rgb(0.18, 0.18, 0.22);
-const MATCH_HOVER: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
+pub fn view_search_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_text_dim = theme.text_dim;
+    let t_accent = theme.accent;
+    let t_menu_hover = theme.menu_hover;
+    let t_dialog_bg = theme.dialog_bg;
+    let t_menu_bg = theme.menu_bg;
+    let t_border = theme.border;
 
-pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     let match_count = state.search_matches.len();
     let match_label = if state.search_query.is_empty() {
         String::new()
@@ -25,18 +26,19 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     // Draggable title bar
     let title = if state.show_replace { "Find and Replace" } else { "Find" };
     let title_bar_content = row![
-        text(title).size(13).color(AppColors::TEXT),
+        text(title).size(13).color(t_text),
         Space::with_width(Length::Fill),
-        nav_button("x", Message::CloseSearch),
+        nav_button("x", Message::CloseSearch, theme),
     ]
     .align_y(iced::Alignment::Center)
     .padding([4, 8]);
 
+    let t_bg = theme.background;
     let title_bar: Element<'_, Message> = mouse_area(
         container(title_bar_content)
             .width(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(TITLE_BAR_BG)),
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(t_bg)),
                 border: iced::Border {
                     radius: iced::border::Radius {
                         top_left: 6.0,
@@ -55,13 +57,13 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     .into();
 
     // Toggle buttons
-    let case_btn = toggle_button("Aa", state.case_sensitive, Message::ToggleCaseSensitive);
-    let word_btn = toggle_button("W", state.whole_word, Message::ToggleWholeWord);
-    let regex_btn = toggle_button(".*", state.use_regex, Message::ToggleRegex);
+    let case_btn = toggle_button("Aa", state.case_sensitive, Message::ToggleCaseSensitive, theme);
+    let word_btn = toggle_button("W", state.whole_word, Message::ToggleWholeWord, theme);
+    let regex_btn = toggle_button(".*", state.use_regex, Message::ToggleRegex, theme);
 
     // Nav buttons
-    let prev_btn = nav_button("<", Message::FindPrev);
-    let next_btn = nav_button(">", Message::FindNext);
+    let prev_btn = nav_button("<", Message::FindPrev, theme);
+    let next_btn = nav_button(">", Message::FindNext, theme);
 
     let find_input = text_input("Find...", &state.search_query)
         .on_input(Message::FindQueryChanged)
@@ -70,7 +72,7 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
         .width(Length::Fixed(250.0));
 
     let find_row = row![
-        text("Find what:").size(12).color(AppColors::TEXT_DIM),
+        text("Find what:").size(12).color(t_text_dim),
         Space::with_width(8),
         find_input,
         Space::with_width(4),
@@ -86,7 +88,7 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     .padding([2, 8]);
 
     let match_info = row![
-        text(match_label).size(11).color(AppColors::TEXT_DIM),
+        text(match_label).size(11).color(t_text_dim),
     ]
     .padding([0, 8]);
 
@@ -99,11 +101,11 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
             .size(13)
             .width(Length::Fixed(250.0));
 
-        let replace_btn = action_button("Replace", Message::ReplaceNext);
-        let replace_all_btn = action_button("Replace All", Message::ReplaceAll);
+        let replace_btn = action_button("Replace", Message::ReplaceNext, theme);
+        let replace_all_btn = action_button("Replace All", Message::ReplaceAll, theme);
 
         let replace_row = row![
-            text("Replace with:").size(12).color(AppColors::TEXT_DIM),
+            text("Replace with:").size(12).color(t_text_dim),
             Space::with_width(8),
             replace_input,
             Space::with_width(4),
@@ -124,12 +126,12 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
             let line_num = format!("{:>5}: ", m.line + 1);
             let line_text = m.line_text.trim().to_string();
             let is_current = state.current_match_index == Some(i);
-            let bg = if is_current { TOGGLE_ON } else { MATCH_BG };
+            let bg = if is_current { t_accent } else { t_menu_bg };
 
             let result_btn = button(
                 row![
-                    text(line_num).size(11).color(AppColors::TEXT_DIM),
-                    text(line_text).size(11).color(AppColors::TEXT),
+                    text(line_num).size(11).color(t_text_dim),
+                    text(line_text).size(11).color(t_text),
                 ]
                 .spacing(4),
             )
@@ -139,8 +141,8 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
             .style(move |_theme: &Theme, status| {
                 let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
                 button::Style {
-                    background: Some(iced::Background::Color(if hover { MATCH_HOVER } else { bg })),
-                    text_color: AppColors::TEXT,
+                    background: Some(iced::Background::Color(if hover { t_menu_hover } else { bg })),
+                    text_color: t_text,
                     border: iced::Border {
                         radius: 2.0.into(),
                         ..Default::default()
@@ -159,10 +161,10 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
     // Wrap in a window-like container
     container(panel)
         .width(Length::Fixed(520.0))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(PANEL_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_dialog_bg)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.35, 0.35, 0.40),
+                color: t_border,
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -176,14 +178,15 @@ pub fn view_search_panel<'a>(state: &NotepadIced) -> Element<'a, Message> {
         .into()
 }
 
-fn toggle_button<'a>(label: &str, active: bool, msg: Message) -> Element<'a, Message> {
-    let bg = if active { TOGGLE_ON } else { TOGGLE_OFF };
+fn toggle_button<'a>(label: &str, active: bool, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let bg = if active { theme.accent } else { theme.button_bg };
     button(text(label.to_string()).size(12))
         .on_press(msg)
         .padding([3, 6])
         .style(move |_theme: &Theme, _status| button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color: AppColors::TEXT,
+            text_color: t_text,
             border: iced::Border {
                 radius: 3.0.into(),
                 ..Default::default()
@@ -193,20 +196,22 @@ fn toggle_button<'a>(label: &str, active: bool, msg: Message) -> Element<'a, Mes
         .into()
 }
 
-fn nav_button<'a>(label: &str, msg: Message) -> Element<'a, Message> {
+fn nav_button<'a>(label: &str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_button_bg = theme.button_bg;
     button(text(label.to_string()).size(14))
         .on_press(msg)
         .padding([2, 6])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
                 button::Status::Hovered | button::Status::Pressed => {
-                    Some(iced::Background::Color(TOGGLE_OFF))
+                    Some(iced::Background::Color(t_button_bg))
                 }
                 _ => None,
             };
             button::Style {
                 background: bg,
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -217,18 +222,21 @@ fn nav_button<'a>(label: &str, msg: Message) -> Element<'a, Message> {
         .into()
 }
 
-fn action_button<'a>(label: &str, msg: Message) -> Element<'a, Message> {
+fn action_button<'a>(label: &str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
     button(text(label.to_string()).size(12))
         .on_press(msg)
         .padding([3, 8])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => TOGGLE_ON,
-                _ => TOGGLE_OFF,
+                button::Status::Hovered | button::Status::Pressed => t_accent,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()

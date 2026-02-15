@@ -2,24 +2,25 @@ use iced::widget::{button, checkbox, column, container, row, text, text_input, S
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
-use super::theme::AppColors;
+use super::theme::{AppColors, AppTheme};
 
-const DIALOG_BG: iced::Color = iced::Color::from_rgb(0.18, 0.18, 0.22);
-const BUTTON_BG: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
 const FIELD_LABEL_SIZE: u16 = 13;
 
-fn action_button<'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
+fn action_button<'a>(label: &'a str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
     button(text(label).size(13))
         .on_press(msg)
         .padding([4, 16])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                _ => BUTTON_BG,
+                button::Status::Hovered | button::Status::Pressed => t_accent,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -30,20 +31,21 @@ fn action_button<'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
         .into()
 }
 
-fn close_button<'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
+fn close_button<'a>(label: &'a str, msg: Message, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_button_bg = theme.button_bg;
+    let t_menu_hover = theme.menu_hover;
     button(text(label).size(13))
         .on_press(msg)
         .padding([4, 12])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => {
-                    iced::Color::from_rgb(0.30, 0.30, 0.35)
-                }
-                _ => BUTTON_BG,
+                button::Status::Hovered | button::Status::Pressed => t_menu_hover,
+                _ => t_button_bg,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border {
                     radius: 3.0.into(),
                     ..Default::default()
@@ -54,9 +56,9 @@ fn close_button<'a>(label: &'a str, msg: Message) -> Element<'a, Message> {
         .into()
 }
 
-fn setting_row<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Message> {
+fn setting_row<'a>(label: &'a str, control: Element<'a, Message>, theme: &AppTheme) -> Element<'a, Message> {
     row![
-        container(text(label).size(FIELD_LABEL_SIZE).color(AppColors::TEXT))
+        container(text(label).size(FIELD_LABEL_SIZE).color(theme.text))
             .width(Length::Fixed(140.0)),
         control,
     ]
@@ -65,20 +67,27 @@ fn setting_row<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a,
     .into()
 }
 
-pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> {
-    let title = text("Preferences").size(18).color(AppColors::TEXT);
+pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let t_text = theme.text;
+    let t_accent = theme.accent;
+    let t_button_bg = theme.button_bg;
+    let t_close_hover = theme.close_hover;
+    let t_dialog_bg = theme.dialog_bg;
+    let t_border = theme.border;
+
+    let title = text("Preferences").size(18).color(t_text);
 
     let close_x = button(text("x").size(14))
         .on_press(Message::CancelPreferences)
         .padding([2, 6])
-        .style(|_theme: &Theme, status| {
+        .style(move |_theme: &Theme, status| {
             let bg = match status {
-                button::Status::Hovered | button::Status::Pressed => AppColors::CLOSE_HOVER,
+                button::Status::Hovered | button::Status::Pressed => t_close_hover,
                 _ => iced::Color::TRANSPARENT,
             };
             button::Style {
                 background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
+                text_color: t_text,
                 border: iced::Border::default(),
                 ..Default::default()
             }
@@ -96,32 +105,32 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> 
         button(text("-").size(14))
             .on_press(Message::PrefFontSizeDecrease)
             .padding([2, 8])
-            .style(|_t: &Theme, s| {
+            .style(move |_t: &Theme, s| {
                 let bg = match s {
-                    button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                    _ => BUTTON_BG,
+                    button::Status::Hovered | button::Status::Pressed => t_accent,
+                    _ => t_button_bg,
                 };
                 button::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: AppColors::TEXT,
+                    text_color: t_text,
                     border: iced::Border { radius: 3.0.into(), ..Default::default() },
                     ..Default::default()
                 }
             }),
         text(format!("{:.0}", state.pref_font_size))
             .size(13)
-            .color(AppColors::TEXT),
+            .color(t_text),
         button(text("+").size(14))
             .on_press(Message::PrefFontSizeIncrease)
             .padding([2, 8])
-            .style(|_t: &Theme, s| {
+            .style(move |_t: &Theme, s| {
                 let bg = match s {
-                    button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                    _ => BUTTON_BG,
+                    button::Status::Hovered | button::Status::Pressed => t_accent,
+                    _ => t_button_bg,
                 };
                 button::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: AppColors::TEXT,
+                    text_color: t_text,
                     border: iced::Border { radius: 3.0.into(), ..Default::default() },
                     ..Default::default()
                 }
@@ -136,23 +145,32 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> 
         .size(13)
         .width(Length::Fixed(60.0));
 
-    // Theme toggle
-    let theme_label = if state.pref_theme == "light" { "Light" } else { "Dark" };
-    let theme_control = button(text(theme_label).size(13))
-        .on_press(Message::PrefToggleTheme)
-        .padding([4, 16])
-        .style(|_t: &Theme, s| {
-            let bg = match s {
-                button::Status::Hovered | button::Status::Pressed => AppColors::ACCENT,
-                _ => BUTTON_BG,
-            };
-            button::Style {
-                background: Some(iced::Background::Color(bg)),
-                text_color: AppColors::TEXT,
-                border: iced::Border { radius: 3.0.into(), ..Default::default() },
-                ..Default::default()
-            }
-        });
+    // Theme selector: list of buttons
+    let available = AppColors::available_themes();
+    let mut theme_buttons = row![].spacing(4);
+    for t in &available {
+        let name = t.name.clone();
+        let is_selected = state.pref_theme == name;
+        let btn_bg = if is_selected { t_accent } else { t_button_bg };
+        let name_clone = name.clone();
+        theme_buttons = theme_buttons.push(
+            button(text(name).size(11))
+                .on_press(Message::PrefSetTheme(name_clone))
+                .padding([3, 8])
+                .style(move |_t: &Theme, s| {
+                    let bg = match s {
+                        button::Status::Hovered | button::Status::Pressed => t_accent,
+                        _ => btn_bg,
+                    };
+                    button::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        text_color: t_text,
+                        border: iced::Border { radius: 3.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                }),
+        );
+    }
 
     // Checkboxes
     let auto_save = checkbox("Auto Save", state.pref_auto_save)
@@ -177,17 +195,17 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> 
 
     // Buttons
     let buttons = row![
-        action_button("Save", Message::SavePreferences),
-        close_button("Cancel", Message::CancelPreferences),
+        action_button("Save", Message::SavePreferences, theme),
+        close_button("Cancel", Message::CancelPreferences, theme),
     ]
     .spacing(8);
 
     let content = column![
         header,
         Space::with_height(8),
-        setting_row("Font Size", font_size_control.into()),
-        setting_row("Tab Size", tab_size_control.into()),
-        setting_row("Theme", theme_control.into()),
+        setting_row("Font Size", font_size_control.into(), theme),
+        setting_row("Tab Size", tab_size_control.into(), theme),
+        setting_row("Theme", theme_buttons.into(), theme),
         Space::with_height(4),
         auto_save,
         word_wrap,
@@ -198,13 +216,13 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced) -> Element<'a, Message> 
     ]
     .spacing(6)
     .padding(16)
-    .width(Length::Fixed(360.0));
+    .width(Length::Fixed(480.0));
 
     container(content)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(DIALOG_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(t_dialog_bg)),
             border: iced::Border {
-                color: iced::Color::from_rgb(0.30, 0.30, 0.35),
+                color: t_border,
                 width: 1.0,
                 radius: 4.0.into(),
             },

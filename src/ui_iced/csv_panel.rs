@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, scrollable, text, Space};
-use iced::{Color, Element, Font, Length, Theme};
+use iced::{Element, Font, Length, Theme};
 
 use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
@@ -27,7 +27,7 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
+        .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(t_background)),
             ..Default::default()
         })

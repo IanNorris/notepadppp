@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, scrollable, text, row, Space};
-use iced::{Color, Element, Length, Theme};
+use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;

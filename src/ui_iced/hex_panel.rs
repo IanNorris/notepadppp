@@ -2,17 +2,18 @@ use iced::widget::{column, container, row, scrollable, text, Space};
 use iced::{Element, Font, Length, Theme};
 
 use super::app::{Message, NotepadIced};
-use super::theme::AppColors;
+use super::theme::AppTheme;
 use crate::tools::hex_viewer::HexView;
 
-const PANEL_BG: iced::Color = iced::Color::from_rgb(0.12, 0.12, 0.14);
-const HEADER_BG: iced::Color = iced::Color::from_rgb(0.14, 0.14, 0.17);
-const OFFSET_COLOR: iced::Color = iced::Color::from_rgb(0.45, 0.50, 0.55);
-const HEX_COLOR: iced::Color = iced::Color::from_rgb(0.82, 0.82, 0.82);
-const ASCII_COLOR: iced::Color = iced::Color::from_rgb(0.40, 0.82, 0.82);
-const SEPARATOR: iced::Color = iced::Color::from_rgb(0.25, 0.25, 0.30);
-
-pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
+pub fn view_hex_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
+    let panel_bg = theme.background;
+    let header_bg = theme.tab_bar_bg;
+    let offset_color = theme.text_dim;
+    let hex_color = theme.text;
+    let ascii_color = theme.accent;
+    let separator = theme.border;
+    let text_color = theme.text;
+    let text_dim_color = theme.text_dim;
     let content_text = state
         .tab_contents
         .get(state.tab_manager.active_index())
@@ -25,18 +26,18 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     // Header
     let toolbar = container(
         row![
-            text("Hex Viewer").size(13).color(AppColors::TEXT),
+            text("Hex Viewer").size(13).color(text_color),
             Space::with_width(Length::Fill),
             text(format!("{} bytes", hex_view.bytes.len()))
                 .size(12)
-                .color(AppColors::TEXT_DIM),
+                .color(text_dim_color),
         ]
         .align_y(iced::Alignment::Center)
         .padding([6, 10]),
     )
     .width(Length::Fill)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(iced::Background::Color(HEADER_BG)),
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(header_bg)),
         ..Default::default()
     });
 
@@ -45,7 +46,7 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     col_header_parts.push(
         text("  Offset  ")
             .size(11)
-            .color(OFFSET_COLOR)
+            .color(offset_color)
             .font(Font::MONOSPACE)
             .into(),
     );
@@ -61,7 +62,7 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     col_header_parts.push(
         text(hex_hdr)
             .size(11)
-            .color(OFFSET_COLOR)
+            .color(offset_color)
             .font(Font::MONOSPACE)
             .into(),
     );
@@ -69,7 +70,7 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     col_header_parts.push(
         text("ASCII")
             .size(11)
-            .color(OFFSET_COLOR)
+            .color(offset_color)
             .font(Font::MONOSPACE)
             .into(),
     );
@@ -79,10 +80,10 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     )
     .padding([4, 10])
     .width(Length::Fill)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(iced::Background::Color(PANEL_BG)),
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(panel_bg)),
         border: iced::Border {
-            color: SEPARATOR,
+            color: separator,
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -133,11 +134,11 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         }
 
         let hex_row = row![
-            text(offset_str).size(12).color(OFFSET_COLOR).font(Font::MONOSPACE),
+            text(offset_str).size(12).color(offset_color).font(Font::MONOSPACE),
             Space::with_width(8),
-            text(hex_str).size(12).color(HEX_COLOR).font(Font::MONOSPACE),
+            text(hex_str).size(12).color(hex_color).font(Font::MONOSPACE),
             Space::with_width(8),
-            text(ascii_str).size(12).color(ASCII_COLOR).font(Font::MONOSPACE),
+            text(ascii_str).size(12).color(ascii_color).font(Font::MONOSPACE),
         ]
         .align_y(iced::Alignment::Center);
 
@@ -148,7 +149,7 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
     if row_count == 0 {
         hex_rows = hex_rows.push(
-            container(text("Empty document").size(13).color(AppColors::TEXT_DIM))
+            container(text("Empty document").size(13).color(text_dim_color))
                 .padding([10, 10]),
         );
     }
@@ -160,8 +161,8 @@ pub fn view_hex_viewer<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     container(panel)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(PANEL_BG)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(panel_bg)),
             ..Default::default()
         })
         .into()
