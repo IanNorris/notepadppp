@@ -1,5 +1,5 @@
 use iced::widget::{
-    button, column, container, pick_list, row, scrollable, text, text_input, Space,
+    button, column, container, mouse_area, pick_list, row, scrollable, text, text_input, Space,
 };
 use iced::{Element, Font, Length, Theme};
 
@@ -7,7 +7,7 @@ use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
 use crate::tools::disasm::DisasmArch;
 
-const VISIBLE_LINES: usize = 50;
+const VISIBLE_LINES: usize = 60;
 
 pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
     let panel_bg = theme.background;
@@ -39,19 +39,21 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
     .text_size(12)
     .into();
 
-    let goto_addr_input: Element<'a, Message> = text_input("Go to address...", &state.disasm_goto_addr)
-        .on_input(Message::DisasmGotoAddressInput)
-        .on_submit(Message::DisasmGotoAddress(state.disasm_goto_addr.clone()))
-        .size(12)
-        .width(140)
-        .into();
+    let goto_addr_input: Element<'a, Message> =
+        text_input("Go to address...", &state.disasm_goto_addr)
+            .on_input(Message::DisasmGotoAddressInput)
+            .on_submit(Message::DisasmGotoAddress(state.disasm_goto_addr.clone()))
+            .size(12)
+            .width(140)
+            .into();
 
-    let goto_sym_input: Element<'a, Message> = text_input("Go to symbol...", &state.disasm_goto_sym)
-        .on_input(Message::DisasmGotoSymbolInput)
-        .on_submit(Message::DisasmGotoSymbol(state.disasm_goto_sym.clone()))
-        .size(12)
-        .width(140)
-        .into();
+    let goto_sym_input: Element<'a, Message> =
+        text_input("Go to symbol...", &state.disasm_goto_sym)
+            .on_input(Message::DisasmGotoSymbolInput)
+            .on_submit(Message::DisasmGotoSymbol(state.disasm_goto_sym.clone()))
+            .size(12)
+            .width(140)
+            .into();
 
     let base_addr_input: Element<'a, Message> =
         text_input("Base address", &state.disasm_base_addr_input)
@@ -68,6 +70,15 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         .as_ref()
         .map(|d| d.bytes().len())
         .unwrap_or(0);
+    let sym_count = state
+        .disasm_state
+        .as_ref()
+        .map(|d| d.symbols().len())
+        .unwrap_or(0);
+
+    let sym_browser_btn = button(text("Symbols").size(11))
+        .on_press(Message::DisasmToggleSymBrowser)
+        .padding([3, 8]);
 
     let toolbar = container(
         row![
@@ -81,8 +92,10 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
             goto_addr_input,
             Space::with_width(6),
             goto_sym_input,
+            Space::with_width(6),
+            sym_browser_btn,
             Space::with_width(Length::Fill),
-            text(format!("{} bytes", byte_count))
+            text(format!("{} bytes  {} syms", byte_count, sym_count))
                 .size(12)
                 .color(text_dim),
         ]
@@ -95,39 +108,58 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         ..Default::default()
     });
 
-    // Column header
-    let col_header = container(
-        row![
+    // Column header — dynamic based on toggle state
+    let mut header_row = row![].align_y(iced::Alignment::Center);
+    if state.disasm_show_address {
+        header_row = header_row.push(
             container(text("Address").size(11).color(text_dim).font(Font::MONOSPACE)).width(160),
+        );
+    }
+    if state.disasm_show_bytes {
+        header_row = header_row.push(
             container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(180),
-            container(text("Mnemonic").size(11).color(text_dim).font(Font::MONOSPACE)).width(80),
-            container(text("Operands").size(11).color(text_dim).font(Font::MONOSPACE)).width(300),
-            container(text("Comment").size(11).color(text_dim).font(Font::MONOSPACE)).width(Length::Fill),
-        ]
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([4, 10])
-    .width(Length::Fill)
-    .style(move |_theme: &Theme| container::Style {
-        background: Some(iced::Background::Color(panel_bg)),
-        border: iced::Border {
-            color: separator,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
-    });
+        );
+    }
+    header_row = header_row.push(
+        container(text("Mnemonic").size(11).color(text_dim).font(Font::MONOSPACE)).width(80),
+    );
+    header_row = header_row.push(
+        container(text("Operands").size(11).color(text_dim).font(Font::MONOSPACE))
+            .width(Length::Fill),
+    );
+    if state.disasm_show_raw_comment {
+        header_row = header_row.push(
+            container(text("").size(11).color(text_dim).font(Font::MONOSPACE)).width(280),
+        );
+    }
+
+    let col_header = container(header_row)
+        .padding([4, 10])
+        .width(Length::Fill)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(panel_bg)),
+            border: iced::Border {
+                color: separator,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        });
 
     // Disassembly rows
-    let mut rows = column![].spacing(0);
+    let mut rows = column![].spacing(0).width(Length::Fill);
 
     if let Some(ref disasm) = state.disasm_state {
         let lines = disasm.disassemble_range(state.disasm_offset, VISIBLE_LINES);
 
         if lines.is_empty() {
             rows = rows.push(
-                container(text("No instructions at this offset").size(13).color(text_dim))
-                    .padding([10, 10]),
+                container(
+                    text("No instructions at this offset")
+                        .size(13)
+                        .color(text_dim),
+                )
+                .padding([10, 10]),
             );
         } else {
             for line in &lines {
@@ -140,54 +172,97 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                                 .color(accent)
                                 .font(Font::MONOSPACE),
                         )
-                        .padding([2, 10]),
+                        .padding([4, 10]),
                     );
                 }
 
-                let addr_str = format!("0x{:016X}", line.address);
-                let bytes_str = line
-                    .bytes
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                // Pad bytes column to 20 chars
-                let bytes_padded = format!("{:<20}", bytes_str);
+                let mut insn_row = row![].align_y(iced::Alignment::Center);
+
+                if state.disasm_show_address {
+                    let addr_str = format!("0x{:016X}", line.address);
+                    insn_row = insn_row.push(
+                        container(
+                            text(addr_str)
+                                .size(12)
+                                .color(text_dim)
+                                .font(Font::MONOSPACE),
+                        )
+                        .width(160),
+                    );
+                }
+
+                if state.disasm_show_bytes {
+                    let bytes_str = line
+                        .bytes
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let bytes_padded = format!("{:<20}", bytes_str);
+                    insn_row = insn_row.push(
+                        container(
+                            text(bytes_padded)
+                                .size(12)
+                                .color(text_dim)
+                                .font(Font::MONOSPACE),
+                        )
+                        .width(180),
+                    );
+                }
 
                 let mnemonic_padded = format!("{:<10}", line.mnemonic);
+                insn_row = insn_row.push(
+                    container(
+                        text(mnemonic_padded)
+                            .size(12)
+                            .color(text_color)
+                            .font(Font::MONOSPACE),
+                    )
+                    .width(80),
+                );
 
-                let addr_color = if line.is_branch_target {
-                    accent
+                // Operands: show resolved or raw depending on toggle
+                let operands_display = if state.disasm_show_resolved {
+                    line.operands.clone()
                 } else {
-                    text_dim
+                    // Show raw (the comment has the raw form when resolved)
+                    line.comment.clone().unwrap_or_else(|| line.operands.clone())
                 };
+                insn_row = insn_row.push(
+                    container(
+                        text(operands_display)
+                            .size(12)
+                            .color(text_color)
+                            .font(Font::MONOSPACE),
+                    )
+                    .width(Length::Fill),
+                );
 
-                let operands_str = line.operands.clone();
-                let comment_str = line.comment.clone().unwrap_or_default();
-
-                let insn_row = row![
-                    container(text(addr_str)
-                        .size(12)
-                        .color(addr_color)
-                        .font(Font::MONOSPACE)).width(160),
-                    container(text(bytes_padded)
-                        .size(12)
-                        .color(text_dim)
-                        .font(Font::MONOSPACE)).width(180),
-                    container(text(mnemonic_padded)
-                        .size(12)
-                        .color(text_color)
-                        .font(Font::MONOSPACE)).width(80),
-                    container(text(operands_str)
-                        .size(12)
-                        .color(text_color)
-                        .font(Font::MONOSPACE)).width(300),
-                    container(text(if comment_str.is_empty() { String::new() } else { format!("; {}", comment_str) })
-                        .size(12)
-                        .color(text_dim)
-                        .font(Font::MONOSPACE)).width(Length::Fill),
-                ]
-                .align_y(iced::Alignment::Center);
+                // Comment column: show raw when resolved, or nothing
+                if state.disasm_show_raw_comment {
+                    let comment_text = if state.disasm_show_resolved {
+                        line.comment
+                            .as_ref()
+                            .map(|c| format!("; {}", c))
+                            .unwrap_or_default()
+                    } else {
+                        // When showing raw operands, show resolved as comment
+                        if line.comment.is_some() {
+                            format!("; {}", line.operands)
+                        } else {
+                            String::new()
+                        }
+                    };
+                    insn_row = insn_row.push(
+                        container(
+                            text(comment_text)
+                                .size(12)
+                                .color(text_dim)
+                                .font(Font::MONOSPACE),
+                        )
+                        .width(280),
+                    );
+                }
 
                 rows = rows.push(container(insn_row).padding([1, 10]));
             }
@@ -203,24 +278,20 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         );
     }
 
-    // Navigation buttons
-    let nav_row = container(
+    // Status bar at bottom
+    let status_bar = container(
         row![
-            button(text("↑ Page Up").size(11))
-                .on_press(Message::DisasmScroll(-50))
-                .padding([4, 8]),
-            Space::with_width(4),
-            button(text("↓ Page Down").size(11))
-                .on_press(Message::DisasmScroll(50))
-                .padding([4, 8]),
-            Space::with_width(4),
-            button(text("⇤ Top").size(11))
-                .on_press(Message::DisasmScroll(i32::MIN))
-                .padding([4, 8]),
-            Space::with_width(Length::Fill),
             text(format!("Offset: 0x{:X}", state.disasm_offset))
                 .size(11)
                 .color(text_dim),
+            Space::with_width(Length::Fill),
+            text(if state.disasm_edit_mode {
+                "EDIT MODE"
+            } else {
+                "Scroll with mouse wheel · Right-click for options"
+            })
+            .size(11)
+            .color(text_dim),
         ]
         .align_y(iced::Alignment::Center)
         .padding([4, 10]),
@@ -236,7 +307,11 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         ..Default::default()
     });
 
-    let body = scrollable(rows.width(Length::Fill))
+    // Use mouse_area to capture right-click and scroll
+    let body_content = mouse_area(rows)
+        .on_right_press(Message::DisasmContextMenu);
+
+    let body = scrollable(body_content)
         .height(Length::Fill)
         .width(Length::Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(
@@ -244,14 +319,246 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 .width(10)
                 .scroller_width(8),
         ));
-    let panel = column![toolbar, col_header, body, nav_row];
 
-    container(panel)
+    let panel = column![toolbar, col_header, body, status_bar];
+
+    let base_panel: Element<'a, Message> = container(panel)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(move |_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(panel_bg)),
             ..Default::default()
         })
+        .into();
+
+    // Overlay: context menu or symbol browser
+    if state.disasm_context_menu {
+        let check = |v: bool| if v { "✓ " } else { "  " };
+
+        let ctx_menu = container(
+            column![
+                button(
+                    text(format!("{}Show Address", check(state.disasm_show_address)))
+                        .size(12)
+                        .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleAddress)
+                .width(Length::Fill)
+                .padding([4, 12]),
+                button(
+                    text(format!("{}Show Bytes", check(state.disasm_show_bytes)))
+                        .size(12)
+                        .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleBytes)
+                .width(Length::Fill)
+                .padding([4, 12]),
+                button(
+                    text(format!(
+                        "{}Symbol Resolution",
+                        check(state.disasm_show_resolved)
+                    ))
+                    .size(12)
+                    .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleResolved)
+                .width(Length::Fill)
+                .padding([4, 12]),
+                button(
+                    text(format!(
+                        "{}Show Raw Comment",
+                        check(state.disasm_show_raw_comment)
+                    ))
+                    .size(12)
+                    .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleRawComment)
+                .width(Length::Fill)
+                .padding([4, 12]),
+                container(Space::with_height(1))
+                    .width(Length::Fill)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(iced::Background::Color(separator)),
+                        ..Default::default()
+                    }),
+                button(text("Copy All Visible").size(12))
+                    .on_press(Message::DisasmCopySelection)
+                    .width(Length::Fill)
+                    .padding([4, 12]),
+                button(
+                    text(format!(
+                        "{}Edit Bytes",
+                        check(state.disasm_edit_mode)
+                    ))
+                    .size(12)
+                    .font(Font::MONOSPACE),
+                )
+                .on_press(Message::DisasmToggleEditMode)
+                .width(Length::Fill)
+                .padding([4, 12]),
+            ]
+            .spacing(1)
+            .width(200),
+        )
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(header_bg)),
+            border: iced::Border {
+                color: separator,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding(4);
+
+        use iced::widget::{opaque, stack};
+        // Overlay the context menu
+        stack![
+            base_panel,
+            mouse_area(
+                container(
+                    mouse_area(opaque(ctx_menu))
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding([100, 300])
+            )
+            .on_press(Message::DisasmCloseContextMenu)
+        ]
         .into()
+    } else if state.disasm_sym_browser {
+        view_symbol_browser(state, theme, base_panel)
+    } else {
+        base_panel
+    }
+}
+
+fn view_symbol_browser<'a>(
+    state: &'a NotepadIced,
+    theme: &AppTheme,
+    base: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let header_bg = theme.tab_bar_bg;
+    let text_color = theme.text;
+    let text_dim = theme.text_dim;
+    let separator = theme.border;
+    let accent = theme.accent;
+
+    let filter_input: Element<'a, Message> = text_input("Filter symbols...", &state.disasm_sym_filter)
+        .on_input(Message::DisasmSymFilterInput)
+        .size(13)
+        .width(Length::Fill)
+        .into();
+
+    let mut sym_list = column![].spacing(0);
+    let mut count = 0;
+    let max_results = 1000;
+
+    if let Some(ref disasm) = state.disasm_state {
+        let filter = state.disasm_sym_filter.to_lowercase();
+        for sym in disasm.symbols() {
+            if !filter.is_empty() && !sym.name.to_lowercase().contains(&filter) {
+                continue;
+            }
+            if count >= max_results {
+                sym_list = sym_list.push(
+                    container(
+                        text(format!("... {} more (refine filter)", disasm.symbols().len() - count))
+                            .size(11)
+                            .color(text_dim),
+                    )
+                    .padding([4, 8]),
+                );
+                break;
+            }
+            let addr = sym.address;
+            let sym_row = button(
+                row![
+                    container(
+                        text(format!("0x{:016X}", addr))
+                            .size(11)
+                            .color(text_dim)
+                            .font(Font::MONOSPACE),
+                    )
+                    .width(160),
+                    text(&sym.name)
+                        .size(11)
+                        .color(text_color)
+                        .font(Font::MONOSPACE),
+                ]
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::DisasmGotoSymFromBrowser(addr))
+            .width(Length::Fill)
+            .padding([2, 8]);
+            sym_list = sym_list.push(sym_row);
+            count += 1;
+        }
+    }
+
+    if count == 0 && !state.disasm_sym_filter.is_empty() {
+        sym_list = sym_list.push(
+            container(
+                text("No matching symbols")
+                    .size(12)
+                    .color(text_dim),
+            )
+            .padding([10, 8]),
+        );
+    }
+
+    let browser = container(
+        column![
+            container(
+                row![
+                    text("Symbol Browser").size(13).color(accent),
+                    Space::with_width(Length::Fill),
+                    text(format!("{} symbols", state.disasm_state.as_ref().map(|d| d.symbols().len()).unwrap_or(0)))
+                        .size(11)
+                        .color(text_dim),
+                    Space::with_width(8),
+                    button(text("✕").size(12))
+                        .on_press(Message::DisasmToggleSymBrowser)
+                        .padding([2, 6]),
+                ]
+                .align_y(iced::Alignment::Center)
+                .padding([8, 12]),
+            )
+            .width(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(iced::Background::Color(header_bg)),
+                ..Default::default()
+            }),
+            container(filter_input).padding([6, 12]),
+            scrollable(sym_list)
+                .height(400)
+                .width(Length::Fill),
+        ]
+        .width(500),
+    )
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(header_bg)),
+        border: iced::Border {
+            color: separator,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    });
+
+    use iced::widget::{opaque, stack};
+    stack![
+        base,
+        iced::widget::mouse_area(
+            container(
+                iced::widget::mouse_area(opaque(browser))
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .padding([60, 0])
+        )
+        .on_press(Message::DisasmToggleSymBrowser)
+    ]
+    .into()
 }

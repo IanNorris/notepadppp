@@ -713,6 +713,15 @@ impl Disassembler {
         });
     }
 
+    /// Write bytes at the given offset, updating the in-memory binary.
+    pub fn write_bytes(&mut self, offset: usize, data: &[u8]) {
+        for (i, &b) in data.iter().enumerate() {
+            if offset + i < self.bytes.len() {
+                self.bytes[offset + i] = b;
+            }
+        }
+    }
+
     fn make_capstone(&self) -> Result<Capstone, capstone::Error> {
         match self.arch {
             DisasmArch::X86_32 => Capstone::new()

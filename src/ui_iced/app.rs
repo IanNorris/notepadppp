@@ -190,6 +190,19 @@ pub enum Message {
     DisasmBaseAddressInput(String),
     DisasmSetArch(crate::tools::disasm::DisasmArch),
     DisasmScroll(i32),
+    DisasmToggleAddress,
+    DisasmToggleBytes,
+    DisasmToggleResolved,
+    DisasmToggleRawComment,
+    DisasmContextMenu,
+    DisasmCloseContextMenu,
+    DisasmToggleSymBrowser,
+    DisasmSymFilterInput(String),
+    DisasmGotoSymFromBrowser(u64),
+    DisasmToggleEditMode,
+    DisasmEditHexInput(String),
+    DisasmEditHexCommit(usize),
+    DisasmCopySelection,
     HashSha256,
     HashSha1,
     HashMd5,
@@ -504,6 +517,16 @@ pub struct NotepadIced {
     pub disasm_goto_addr: String,
     pub disasm_goto_sym: String,
     pub disasm_base_addr_input: String,
+    pub disasm_show_address: bool,
+    pub disasm_show_bytes: bool,
+    pub disasm_show_resolved: bool,
+    pub disasm_show_raw_comment: bool,
+    pub disasm_context_menu: bool,
+    pub disasm_sym_browser: bool,
+    pub disasm_sym_filter: String,
+    pub disasm_edit_mode: bool,
+    pub disasm_edit_offset: Option<usize>,
+    pub disasm_edit_hex: String,
 }
 
 impl Default for NotepadIced {
@@ -611,6 +634,16 @@ impl Default for NotepadIced {
             disasm_goto_addr: String::new(),
             disasm_goto_sym: String::new(),
             disasm_base_addr_input: String::new(),
+            disasm_show_address: true,
+            disasm_show_bytes: true,
+            disasm_show_resolved: true,
+            disasm_show_raw_comment: true,
+            disasm_context_menu: false,
+            disasm_sym_browser: false,
+            disasm_sym_filter: String::new(),
+            disasm_edit_mode: false,
+            disasm_edit_offset: None,
+            disasm_edit_hex: String::new(),
         };
 
         // Apply CLI arguments if provided
@@ -1837,11 +1870,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DisasmScroll(delta) => {
+            if !state.show_disasm {
+                return Task::none();
+            }
             if let Some(ref disasm) = state.disasm_state {
                 if delta == i32::MIN {
                     state.disasm_offset = 0;
+                } else if delta == i32::MAX {
+                    state.disasm_offset = disasm.bytes().len().saturating_sub(50);
                 } else {
-                    // Approximate: each instruction ~3 bytes average
                     let byte_delta = (delta as i64) * 3;
                     let new_off = state.disasm_offset as i64 + byte_delta;
                     state.disasm_offset = new_off.max(0) as usize;
@@ -1850,6 +1887,113 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     }
                 }
             }
+            Task::none()
+        }
+        Message::DisasmToggleAddress => {
+            state.disasm_show_address = !state.disasm_show_address;
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmToggleBytes => {
+            state.disasm_show_bytes = !state.disasm_show_bytes;
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmToggleResolved => {
+            state.disasm_show_resolved = !state.disasm_show_resolved;
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmToggleRawComment => {
+            state.disasm_show_raw_comment = !state.disasm_show_raw_comment;
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmContextMenu => {
+            state.disasm_context_menu = !state.disasm_context_menu;
+            Task::none()
+        }
+        Message::DisasmCloseContextMenu => {
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmToggleSymBrowser => {
+            state.disasm_sym_browser = !state.disasm_sym_browser;
+            state.disasm_sym_filter.clear();
+            Task::none()
+        }
+        Message::DisasmSymFilterInput(s) => {
+            state.disasm_sym_filter = s;
+            Task::none()
+        }
+        Message::DisasmGotoSymFromBrowser(addr) => {
+            if let Some(ref disasm) = state.disasm_state {
+                if let Some(off) = disasm.address_to_offset(addr) {
+                    state.disasm_offset = off;
+                }
+            }
+            state.disasm_sym_browser = false;
+            state.disasm_sym_filter.clear();
+            Task::none()
+        }
+        Message::DisasmToggleEditMode => {
+            state.disasm_edit_mode = !state.disasm_edit_mode;
+            state.disasm_edit_offset = None;
+            state.disasm_edit_hex.clear();
+            state.disasm_context_menu = false;
+            Task::none()
+        }
+        Message::DisasmEditHexInput(s) => {
+            state.disasm_edit_hex = s;
+            Task::none()
+        }
+        Message::DisasmEditHexCommit(offset) => {
+            let hex = state.disasm_edit_hex.replace(' ', "");
+            let mut bytes_to_write = Vec::new();
+            let mut i = 0;
+            while i + 1 < hex.len() {
+                if let Ok(b) = u8::from_str_radix(&hex[i..i + 2], 16) {
+                    bytes_to_write.push(b);
+                }
+                i += 2;
+            }
+            if !bytes_to_write.is_empty() {
+                if let Some(ref mut disasm) = state.disasm_state {
+                    disasm.write_bytes(offset, &bytes_to_write);
+                }
+            }
+            state.disasm_edit_offset = None;
+            state.disasm_edit_hex.clear();
+            Task::none()
+        }
+        Message::DisasmCopySelection => {
+            if let Some(ref disasm) = state.disasm_state {
+                let lines = disasm.disassemble_range(state.disasm_offset, 50);
+                let mut output = String::new();
+                for line in &lines {
+                    if let Some(ref sym) = line.symbol {
+                        output.push_str(&format!("<{}>:\n", sym));
+                    }
+                    if state.disasm_show_address {
+                        output.push_str(&format!("{:016X}  ", line.address));
+                    }
+                    if state.disasm_show_bytes {
+                        let hex: String = line.bytes.iter().map(|b| format!("{:02X} ", b)).collect();
+                        output.push_str(&format!("{:<24}", hex));
+                    }
+                    output.push_str(&format!("{:<10} {}", line.mnemonic, line.operands));
+                    if state.disasm_show_raw_comment {
+                        if let Some(ref c) = line.comment {
+                            output.push_str(&format!("  ; {}", c));
+                        }
+                    }
+                    output.push('\n');
+                }
+                if let Ok(mut clip) = arboard::Clipboard::new() {
+                    let _ = clip.set_text(output);
+                }
+            }
+            state.disasm_context_menu = false;
             Task::none()
         }
 
@@ -2396,7 +2540,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Keyboard ──
         Message::EscapePressed => {
-            if state.editor_context_menu {
+            if state.disasm_context_menu {
+                state.disasm_context_menu = false;
+            } else if state.disasm_sym_browser {
+                state.disasm_sym_browser = false;
+                state.disasm_sym_filter.clear();
+            } else if state.editor_context_menu {
                 state.editor_context_menu = false;
             } else if state.tab_rename.is_some() {
                 state.tab_rename = None;
@@ -3943,6 +4092,29 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
             }
             keyboard::Key::Named(keyboard::key::Named::F11) => {
                 return Some(Message::ToggleFullScreen);
+            }
+            _ => {}
+        }
+
+        // Disasm scrolling keys (no modifier required)
+        match key.as_ref() {
+            keyboard::Key::Named(keyboard::key::Named::PageDown) if !modifiers.command() => {
+                return Some(Message::DisasmScroll(20));
+            }
+            keyboard::Key::Named(keyboard::key::Named::PageUp) if !modifiers.command() => {
+                return Some(Message::DisasmScroll(-20));
+            }
+            keyboard::Key::Named(keyboard::key::Named::ArrowDown) if !modifiers.command() => {
+                return Some(Message::DisasmScroll(1));
+            }
+            keyboard::Key::Named(keyboard::key::Named::ArrowUp) if !modifiers.command() => {
+                return Some(Message::DisasmScroll(-1));
+            }
+            keyboard::Key::Named(keyboard::key::Named::Home) if modifiers.command() => {
+                return Some(Message::DisasmScroll(i32::MIN));
+            }
+            keyboard::Key::Named(keyboard::key::Named::End) if modifiers.command() => {
+                return Some(Message::DisasmScroll(i32::MAX));
             }
             _ => {}
         }

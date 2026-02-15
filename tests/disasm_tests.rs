@@ -428,3 +428,28 @@ fn test_pe_symbolic_resolution() {
         }
     }
 }
+
+#[test]
+fn test_write_bytes_updates_disassembly() {
+    // Start with nops, overwrite first byte with ret (0xC3)
+    let bytes = vec![0x90, 0x90, 0x90, 0x90];
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+
+    let lines = disasm.disassemble_range(0, 4);
+    assert_eq!(lines[0].mnemonic, "nop");
+
+    disasm.write_bytes(0, &[0xC3]);
+    let lines = disasm.disassemble_range(0, 4);
+    assert_eq!(lines[0].mnemonic, "ret", "After write_bytes, instruction should change");
+    assert_eq!(lines[0].bytes, vec![0xC3]);
+}
+
+#[test]
+fn test_write_bytes_out_of_bounds() {
+    let bytes = vec![0x90, 0x90];
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    // Writing beyond buffer should not panic
+    disasm.write_bytes(1, &[0xC3, 0xCC, 0xCC]);
+    // Only offset 1 should be written
+    assert_eq!(disasm.bytes()[1], 0xC3);
+}
