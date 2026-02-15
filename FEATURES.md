@@ -36,7 +36,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ### 1.4 Native Windows UI
 - [ ] Win32 native window (no web rendering)
 - [x] Menu bar with standard menus (File, Edit, Search, View, Encoding, Language, Settings, Window, Help)
-- [ ] Toolbar with common actions
+- [x] Toolbar with common actions
 - [x] Status bar (encoding, line ending, cursor position, file size, language)
 - [x] Context menu on right-click
 
