@@ -88,3 +88,86 @@ fn test_serialization_format() {
     // Verify it's valid JSON
     let _: serde_json::Value = serde_json::from_str(&content).unwrap();
 }
+
+// ── New field tests ──
+
+#[test]
+fn test_default_new_fields() {
+    let settings = AppSettings::default();
+    assert_eq!(settings.font_family, "monospace");
+    assert_eq!(settings.line_spacing, 1.3);
+    assert!(!settings.show_indent_guides);
+    assert!(!settings.show_line_endings);
+    assert!(settings.color_background.is_none());
+    assert!(settings.color_foreground.is_none());
+    assert!(settings.color_selection.is_none());
+    assert!(settings.color_caret.is_none());
+}
+
+#[test]
+fn test_new_fields_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+
+    let mut settings = AppSettings::default();
+    settings.font_family = "JetBrains Mono".to_string();
+    settings.line_spacing = 1.5;
+    settings.show_indent_guides = true;
+    settings.show_line_endings = true;
+    settings.color_background = Some("#1E1E2E".to_string());
+    settings.color_foreground = Some("#CDD6F4".to_string());
+    settings.color_selection = Some("#585B70".to_string());
+    settings.color_caret = Some("#F5E0DC".to_string());
+    settings.save(&path).unwrap();
+
+    let loaded = AppSettings::load(&path).unwrap();
+    assert_eq!(loaded.font_family, "JetBrains Mono");
+    assert_eq!(loaded.line_spacing, 1.5);
+    assert!(loaded.show_indent_guides);
+    assert!(loaded.show_line_endings);
+    assert_eq!(loaded.color_background.as_deref(), Some("#1E1E2E"));
+    assert_eq!(loaded.color_foreground.as_deref(), Some("#CDD6F4"));
+    assert_eq!(loaded.color_selection.as_deref(), Some("#585B70"));
+    assert_eq!(loaded.color_caret.as_deref(), Some("#F5E0DC"));
+}
+
+#[test]
+fn test_backwards_compatibility_missing_new_fields() {
+    // Simulate loading settings saved by an older version without the new fields
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+
+    let old_json = r#"{
+        "font_size": 14.0,
+        "font_family": "monospace",
+        "tab_size": 4,
+        "use_spaces": true,
+        "word_wrap": false,
+        "show_line_numbers": true,
+        "show_whitespace": false,
+        "show_status_bar": true,
+        "auto_indent": true,
+        "auto_close_brackets": true,
+        "default_encoding": "UTF-8",
+        "default_line_ending": "LF",
+        "auto_save": false,
+        "auto_save_interval_secs": 300,
+        "remember_session": false,
+        "recent_files_max": 20,
+        "theme": "base16-ocean.dark",
+        "highlight_current_line": true,
+        "search_wrap_around": true,
+        "search_case_sensitive": false
+    }"#;
+    std::fs::write(&path, old_json).unwrap();
+
+    let loaded = AppSettings::load(&path).unwrap();
+    // New fields should get their defaults
+    assert_eq!(loaded.line_spacing, 1.3);
+    assert!(!loaded.show_indent_guides);
+    assert!(!loaded.show_line_endings);
+    assert!(loaded.color_background.is_none());
+    assert!(loaded.color_foreground.is_none());
+    assert!(loaded.color_selection.is_none());
+    assert!(loaded.color_caret.is_none());
+}

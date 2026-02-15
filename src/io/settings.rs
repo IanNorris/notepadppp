@@ -14,6 +14,12 @@ pub struct AppSettings {
     pub show_status_bar: bool,
     pub auto_indent: bool,
     pub auto_close_brackets: bool,
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: f32,
+    #[serde(default)]
+    pub show_indent_guides: bool,
+    #[serde(default)]
+    pub show_line_endings: bool,
 
     // Files
     pub default_encoding: String,
@@ -26,10 +32,22 @@ pub struct AppSettings {
     // Appearance
     pub theme: String,
     pub highlight_current_line: bool,
+    #[serde(default)]
+    pub color_background: Option<String>,
+    #[serde(default)]
+    pub color_foreground: Option<String>,
+    #[serde(default)]
+    pub color_selection: Option<String>,
+    #[serde(default)]
+    pub color_caret: Option<String>,
 
     // Search
     pub search_wrap_around: bool,
     pub search_case_sensitive: bool,
+}
+
+fn default_line_spacing() -> f32 {
+    1.3
 }
 
 impl Default for AppSettings {
@@ -45,6 +63,9 @@ impl Default for AppSettings {
             show_status_bar: true,
             auto_indent: true,
             auto_close_brackets: true,
+            line_spacing: 1.3,
+            show_indent_guides: false,
+            show_line_endings: false,
             default_encoding: String::from("UTF-8"),
             default_line_ending: String::from("LF"),
             auto_save: false,
@@ -53,6 +74,10 @@ impl Default for AppSettings {
             recent_files_max: 20,
             theme: String::from("base16-ocean.dark"),
             highlight_current_line: true,
+            color_background: None,
+            color_foreground: None,
+            color_selection: None,
+            color_caret: None,
             search_wrap_around: true,
             search_case_sensitive: false,
         }

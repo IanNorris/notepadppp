@@ -2,7 +2,7 @@ use iced::keyboard;
 use iced::mouse;
 use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, text_input, Space};
 use iced::advanced::text::Wrapping;
-use iced::{Element, Length, Subscription, Task, Theme};
+use iced::{Element, Font, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Document, Encoding, LineEnding};
 use crate::editor::folding::FoldManager;
@@ -243,8 +243,20 @@ pub enum Message {
     PrefToggleWordWrap(bool),
     PrefToggleLineNumbers(bool),
     PrefToggleWhitespace(bool),
+    PrefFontFamilyChanged(String),
+    PrefLineSpacingChanged(String),
+    PrefColorBgChanged(String),
+    PrefColorFgChanged(String),
+    PrefColorSelChanged(String),
+    PrefColorCaretChanged(String),
+    ImportTheme,
+    ExportTheme,
+    ThemeImported(Result<(String, std::path::PathBuf), String>),
+    ThemeExported(Result<std::path::PathBuf, String>),
 
-    // Help
+    // View toggles
+    ToggleIndentGuides,
+    ToggleLineEndings,
     ShowAbout,
     CloseAbout,
 
@@ -377,6 +389,19 @@ pub struct NotepadIced {
     pub pref_word_wrap: bool,
     pub pref_show_line_numbers: bool,
     pub pref_show_whitespace: bool,
+    pub pref_font_family: String,
+    pub pref_line_spacing: String,
+    pub pref_color_bg: String,
+    pub pref_color_fg: String,
+    pub pref_color_sel: String,
+    pub pref_color_caret: String,
+
+    // Display toggles
+    pub show_indent_guides: bool,
+    pub show_line_endings: bool,
+    pub line_spacing: f32,
+    pub font_family: String,
+    pub color_caret: Option<String>,
 
     // Keybindings dialog
     pub show_keybindings: bool,
@@ -455,7 +480,8 @@ impl Default for NotepadIced {
             &crate::io::settings::AppSettings::settings_path(),
         )
         .unwrap_or_default();
-        let theme = AppColors::theme_by_name(&settings.theme);
+        let mut theme = AppColors::theme_by_name(&settings.theme);
+        theme.apply_color_overrides(&settings);
         let mut state = Self {
             tab_manager: TabManager::new(),
             tab_contents: vec![TabContent::new()],
@@ -495,6 +521,17 @@ impl Default for NotepadIced {
             pref_word_wrap: settings.word_wrap,
             pref_show_line_numbers: settings.show_line_numbers,
             pref_show_whitespace: settings.show_whitespace,
+            pref_font_family: settings.font_family.clone(),
+            pref_line_spacing: format!("{:.1}", settings.line_spacing),
+            pref_color_bg: settings.color_background.clone().unwrap_or_default(),
+            pref_color_fg: settings.color_foreground.clone().unwrap_or_default(),
+            pref_color_sel: settings.color_selection.clone().unwrap_or_default(),
+            pref_color_caret: settings.color_caret.clone().unwrap_or_default(),
+            show_indent_guides: settings.show_indent_guides,
+            show_line_endings: settings.show_line_endings,
+            line_spacing: settings.line_spacing,
+            font_family: settings.font_family.clone(),
+            color_caret: settings.color_caret.clone(),
             show_keybindings: false,
             find_panel_pos: None, // None = right-aligned default
             dragging_find_panel: false,
@@ -662,6 +699,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::PrefTabSizeChanged(_) | Message::PrefSetTheme(_)
             | Message::PrefToggleAutoSave(_) | Message::PrefToggleWordWrap(_)
             | Message::PrefToggleLineNumbers(_) | Message::PrefToggleWhitespace(_)
+            | Message::PrefFontFamilyChanged(_) | Message::PrefLineSpacingChanged(_)
+            | Message::PrefColorBgChanged(_) | Message::PrefColorFgChanged(_)
+            | Message::PrefColorSelChanged(_) | Message::PrefColorCaretChanged(_)
+            | Message::ImportTheme | Message::ExportTheme
+            | Message::ThemeImported(_) | Message::ThemeExported(_)
             | Message::CloseKeybindingsDialog
             | Message::SessionFileChosen(_) | Message::ExportSaved(_) | Message::CompareFileLoaded(_)
             | Message::EscapePressed
@@ -1640,6 +1682,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.pref_word_wrap = settings.word_wrap;
             state.pref_show_line_numbers = settings.show_line_numbers;
             state.pref_show_whitespace = settings.show_whitespace;
+            state.pref_font_family = settings.font_family.clone();
+            state.pref_line_spacing = format!("{:.1}", settings.line_spacing);
+            state.pref_color_bg = settings.color_background.clone().unwrap_or_default();
+            state.pref_color_fg = settings.color_foreground.clone().unwrap_or_default();
+            state.pref_color_sel = settings.color_selection.clone().unwrap_or_default();
+            state.pref_color_caret = settings.color_caret.clone().unwrap_or_default();
             state.show_preferences = true;
             Task::none()
         }
@@ -1660,6 +1708,14 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             settings.word_wrap = state.pref_word_wrap;
             settings.show_line_numbers = state.pref_show_line_numbers;
             settings.show_whitespace = state.pref_show_whitespace;
+            settings.font_family = state.pref_font_family.clone();
+            settings.line_spacing = state.pref_line_spacing.parse().unwrap_or(1.3);
+            settings.show_indent_guides = state.show_indent_guides;
+            settings.show_line_endings = state.show_line_endings;
+            settings.color_background = if state.pref_color_bg.is_empty() { None } else { Some(state.pref_color_bg.clone()) };
+            settings.color_foreground = if state.pref_color_fg.is_empty() { None } else { Some(state.pref_color_fg.clone()) };
+            settings.color_selection = if state.pref_color_sel.is_empty() { None } else { Some(state.pref_color_sel.clone()) };
+            settings.color_caret = if state.pref_color_caret.is_empty() { None } else { Some(state.pref_color_caret.clone()) };
             if let Err(e) = settings.save(&crate::io::settings::AppSettings::settings_path()) {
                 log::error!("Failed to save settings: {}", e);
             }
@@ -1668,7 +1724,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             state.word_wrap = settings.word_wrap;
             state.show_line_numbers = settings.show_line_numbers;
             state.show_whitespace = settings.show_whitespace;
-            state.theme = AppColors::theme_by_name(&state.pref_theme);
+            state.font_family = settings.font_family.clone();
+            state.line_spacing = settings.line_spacing;
+            state.color_caret = settings.color_caret.clone();
+            let mut theme = AppColors::theme_by_name(&state.pref_theme);
+            theme.apply_color_overrides(&settings);
+            state.theme = theme;
             state.show_preferences = false;
             Task::none()
         }
@@ -1712,6 +1773,108 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::PrefToggleWhitespace(v) => {
             state.pref_show_whitespace = v;
+            Task::none()
+        }
+        Message::PrefFontFamilyChanged(val) => {
+            state.pref_font_family = val;
+            Task::none()
+        }
+        Message::PrefLineSpacingChanged(val) => {
+            state.pref_line_spacing = val;
+            Task::none()
+        }
+        Message::PrefColorBgChanged(val) => {
+            state.pref_color_bg = val;
+            Task::none()
+        }
+        Message::PrefColorFgChanged(val) => {
+            state.pref_color_fg = val;
+            Task::none()
+        }
+        Message::PrefColorSelChanged(val) => {
+            state.pref_color_sel = val;
+            Task::none()
+        }
+        Message::PrefColorCaretChanged(val) => {
+            state.pref_color_caret = val;
+            Task::none()
+        }
+        Message::ToggleIndentGuides => {
+            state.show_indent_guides = !state.show_indent_guides;
+            Task::none()
+        }
+        Message::ToggleLineEndings => {
+            state.show_line_endings = !state.show_line_endings;
+            Task::none()
+        }
+        Message::ImportTheme => {
+            let task = Task::perform(
+                async {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .add_filter("JSON", &["json"])
+                        .set_title("Import Theme")
+                        .pick_file()
+                        .await;
+                    match handle {
+                        Some(file) => {
+                            let path = file.path().to_path_buf();
+                            match std::fs::read_to_string(&path) {
+                                Ok(contents) => Ok((contents, path)),
+                                Err(e) => Err(format!("Failed to read file: {}", e)),
+                            }
+                        }
+                        None => Err("No file selected".into()),
+                    }
+                },
+                Message::ThemeImported,
+            );
+            return task;
+        }
+        Message::ThemeImported(result) => {
+            if let Ok((contents, _path)) = result {
+                match serde_json::from_str::<super::theme::ThemeColors>(&contents) {
+                    Ok(tc) => {
+                        if let Some(theme) = super::theme::AppTheme::from_theme_colors(&tc) {
+                            state.theme = theme;
+                            state.pref_theme = state.theme.name.clone();
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to parse theme: {}", e);
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::ExportTheme => {
+            let theme_colors = state.theme.to_theme_colors();
+            let task = Task::perform(
+                async move {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .add_filter("JSON", &["json"])
+                        .set_title("Export Theme")
+                        .set_file_name("theme.json")
+                        .save_file()
+                        .await;
+                    match handle {
+                        Some(file) => {
+                            let path = file.path().to_path_buf();
+                            match serde_json::to_string_pretty(&theme_colors) {
+                                Ok(json) => match std::fs::write(&path, json) {
+                                    Ok(()) => Ok(path),
+                                    Err(e) => Err(format!("Failed to write: {}", e)),
+                                },
+                                Err(e) => Err(format!("Failed to serialize: {}", e)),
+                            }
+                        }
+                        None => Err("No file selected".into()),
+                    }
+                },
+                Message::ThemeExported,
+            );
+            return task;
+        }
+        Message::ThemeExported(_result) => {
             Task::none()
         }
 
@@ -3733,6 +3896,9 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let active = state.tab_manager.active_index();
     let t_text_dim = state.theme.text_dim;
     let t_bg = state.theme.background;
+    let t_editor_bg = state.theme.editor_bg;
+    let t_text = state.theme.text;
+    let t_selection = state.theme.selection_bg;
 
     if let Some(tc) = state.tab_contents.get(active) {
         let wrapping = if state.word_wrap {
@@ -3741,11 +3907,29 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             Wrapping::None
         };
 
+        let editor_font = Font {
+            family: iced::font::Family::Name(Box::leak(state.font_family.clone().into_boxed_str())),
+            ..Font::MONOSPACE
+        };
+
         let editor = text_editor(&tc.content)
             .on_action(Message::EditorAction)
             .size(state.font_size)
+            .font(editor_font)
+            .line_height(iced::advanced::text::LineHeight::Relative(state.line_spacing))
             .height(Length::Fill)
             .wrapping(wrapping)
+            .style(move |_theme: &Theme, _status| {
+                let bg = iced::Background::Color(t_editor_bg);
+                text_editor::Style {
+                    background: bg,
+                    border: iced::Border::default(),
+                    icon: t_text_dim,
+                    placeholder: t_text_dim,
+                    value: t_text,
+                    selection: t_selection,
+                }
+            })
             .highlight_with::<SyntectHighlighter>(
                 SyntectSettings {
                     extension: state.file_extension.clone(),
@@ -3756,8 +3940,10 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
 
         if state.show_line_numbers {
             let content_text = tc.content.text();
-            let line_count = content_text.lines().count().max(1);
+            let lines: Vec<&str> = content_text.lines().collect();
+            let line_count = lines.len().max(1);
             let gutter_width = 55.0;
+            let tab_size = state.pref_tab_size.parse::<usize>().unwrap_or(4);
 
             let mut gutter_col = column![];
             for i in 1..=line_count {
@@ -3801,7 +3987,61 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                     ..Default::default()
                 });
 
-            let editor_row = row![gutter, editor].height(Length::Fill);
+            // Build editor row with optional indent guides and line endings
+            let mut editor_row = row![gutter].height(Length::Fill);
+
+            // Indent guides column
+            if state.show_indent_guides {
+                let t_guide_color = state.theme.border;
+                let mut guide_col = column![];
+                for i in 0..line_count {
+                    let line = if i < lines.len() { lines[i] } else { "" };
+                    let indent = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+                    let guide_level = indent / tab_size.max(1);
+                    let guides: String = (0..guide_level).map(|_| "│").collect::<Vec<_>>().join(" ");
+                    let guide_text = if guides.is_empty() {
+                        text(" ").size(state.font_size).color(iced::Color::TRANSPARENT)
+                    } else {
+                        text(guides).size(state.font_size).color(t_guide_color)
+                    };
+                    guide_col = guide_col.push(guide_text);
+                }
+                editor_row = editor_row.push(
+                    container(scrollable(guide_col))
+                        .height(Length::Fill)
+                        .style(move |_theme: &Theme| container::Style {
+                            background: Some(iced::Background::Color(t_bg)),
+                            ..Default::default()
+                        })
+                );
+            }
+
+            editor_row = editor_row.push(editor);
+
+            // Line endings column
+            if state.show_line_endings {
+                let t_eol_color = state.theme.text_dim;
+                let doc_le = state.tab_manager.active_document().line_ending;
+                let eol_marker = match doc_le {
+                    crate::editor::document::LineEnding::CRLF => "⏎",
+                    crate::editor::document::LineEnding::LF => "↵",
+                    crate::editor::document::LineEnding::CR => "←",
+                };
+                let mut eol_col = column![];
+                for _ in 0..line_count {
+                    eol_col = eol_col.push(
+                        text(eol_marker).size(state.font_size).color(t_eol_color)
+                    );
+                }
+                editor_row = editor_row.push(
+                    container(scrollable(eol_col))
+                        .height(Length::Fill)
+                        .style(move |_theme: &Theme| container::Style {
+                            background: Some(iced::Background::Color(t_bg)),
+                            ..Default::default()
+                        })
+                );
+            }
 
             container(editor_row)
                 .width(Length::Fill)
@@ -3964,6 +4204,10 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
     let t_bg = state.theme.background;
     let t_status = state.theme.status_bar_bg;
 
+    let t_editor_bg_split = state.theme.editor_bg;
+    let t_text_split = state.theme.text;
+    let t_selection_split = state.theme.selection_bg;
+
     let active = state.split_tab_manager.active_index();
 
     // Editor for split pane
@@ -3974,11 +4218,28 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             Wrapping::None
         };
 
+        let split_font = Font {
+            family: iced::font::Family::Name(Box::leak(state.font_family.clone().into_boxed_str())),
+            ..Font::MONOSPACE
+        };
+
         let editor_widget = text_editor(&tc.content)
             .on_action(Message::SplitEditorAction)
             .size(state.split_font_size)
+            .font(split_font)
+            .line_height(iced::advanced::text::LineHeight::Relative(state.line_spacing))
             .height(Length::Fill)
             .wrapping(wrapping)
+            .style(move |_theme: &Theme, _status| {
+                text_editor::Style {
+                    background: iced::Background::Color(t_editor_bg_split),
+                    border: iced::Border::default(),
+                    icon: t_text_dim,
+                    placeholder: t_text_dim,
+                    value: t_text_split,
+                    selection: t_selection_split,
+                }
+            })
             .highlight_with::<SyntectHighlighter>(
                 SyntectSettings {
                     extension: state.split_file_extension.clone(),

@@ -1,4 +1,4 @@
-use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input, Space};
+use iced::widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input, Space};
 use iced::{Element, Length, Theme};
 
 use super::app::{Message, NotepadIced};
@@ -139,9 +139,35 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
     .spacing(8)
     .align_y(iced::Alignment::Center);
 
+    // Font family selector
+    let font_families: Vec<String> = vec![
+        "monospace".into(),
+        "Cascadia Code".into(),
+        "Consolas".into(),
+        "JetBrains Mono".into(),
+        "Fira Code".into(),
+        "Source Code Pro".into(),
+        "Courier New".into(),
+    ];
+    let selected_font = Some(state.pref_font_family.clone());
+    let font_picker: Element<'a, Message> = pick_list(
+        font_families,
+        selected_font,
+        Message::PrefFontFamilyChanged,
+    )
+    .text_size(13)
+    .width(Length::Fixed(200.0))
+    .into();
+
     // Tab size input
     let tab_size_control = text_input("4", &state.pref_tab_size)
         .on_input(Message::PrefTabSizeChanged)
+        .size(13)
+        .width(Length::Fixed(60.0));
+
+    // Line spacing input
+    let line_spacing_control = text_input("1.3", &state.pref_line_spacing)
+        .on_input(Message::PrefLineSpacingChanged)
         .size(13)
         .width(Length::Fixed(60.0));
 
@@ -157,6 +183,34 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
     .text_size(13)
     .width(Length::Fixed(200.0))
     .into();
+
+    // Theme import/export buttons
+    let theme_buttons = row![
+        action_button("Import Theme...", Message::ImportTheme, theme),
+        action_button("Export Theme...", Message::ExportTheme, theme),
+    ]
+    .spacing(8);
+
+    // Color customization inputs
+    let color_bg_input = text_input("#RRGGBB", &state.pref_color_bg)
+        .on_input(Message::PrefColorBgChanged)
+        .size(13)
+        .width(Length::Fixed(100.0));
+
+    let color_fg_input = text_input("#RRGGBB", &state.pref_color_fg)
+        .on_input(Message::PrefColorFgChanged)
+        .size(13)
+        .width(Length::Fixed(100.0));
+
+    let color_sel_input = text_input("#RRGGBB", &state.pref_color_sel)
+        .on_input(Message::PrefColorSelChanged)
+        .size(13)
+        .width(Length::Fixed(100.0));
+
+    let color_caret_input = text_input("#RRGGBB", &state.pref_color_caret)
+        .on_input(Message::PrefColorCaretChanged)
+        .size(13)
+        .width(Length::Fixed(100.0));
 
     // Checkboxes
     let auto_save = checkbox("Auto Save", state.pref_auto_save)
@@ -189,14 +243,26 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
     let content = column![
         header,
         Space::with_height(8),
+        text("Editor").size(14).color(t_accent),
+        setting_row("Font Family", font_picker, theme),
         setting_row("Font Size", font_size_control.into(), theme),
         setting_row("Tab Size", tab_size_control.into(), theme),
-        setting_row("Theme", theme_picker, theme),
+        setting_row("Line Spacing", line_spacing_control.into(), theme),
         Space::with_height(4),
         auto_save,
         word_wrap,
         line_numbers,
         whitespace,
+        Space::with_height(8),
+        text("Appearance").size(14).color(t_accent),
+        setting_row("Theme", theme_picker, theme),
+        theme_buttons,
+        Space::with_height(4),
+        text("Color Overrides (hex)").size(14).color(t_accent),
+        setting_row("Background", color_bg_input.into(), theme),
+        setting_row("Text", color_fg_input.into(), theme),
+        setting_row("Selection", color_sel_input.into(), theme),
+        setting_row("Caret", color_caret_input.into(), theme),
         Space::with_height(8),
         buttons,
     ]
@@ -204,20 +270,23 @@ pub fn view_preferences_dialog<'a>(state: &NotepadIced, theme: &AppTheme) -> Ele
     .padding(16)
     .width(Length::Fixed(480.0));
 
-    container(content)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(t_dialog_bg)),
-            border: iced::Border {
-                color: t_border,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        })
-        .into()
+    container(
+        scrollable(content).height(Length::Fill)
+    )
+    .max_height(600)
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(iced::Background::Color(t_dialog_bg)),
+        border: iced::Border {
+            color: t_border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+        ..Default::default()
+    })
+    .into()
 }

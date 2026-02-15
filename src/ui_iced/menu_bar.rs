@@ -277,6 +277,8 @@ fn build_view_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
         check_item("Minimap", state.show_minimap, Message::ToggleMinimap, t),
         check_item("Function List", state.show_function_list, Message::ToggleFunctionList, t),
         check_item("Search Results", state.show_search_results_panel, Message::ToggleSearchResultsPanel, t),
+        check_item("Show Indent Guides", state.show_indent_guides, Message::ToggleIndentGuides, t),
+        check_item("Show Line Endings", state.show_line_endings, Message::ToggleLineEndings, t),
         separator(t),
         menu_item("Split Horizontal", "", Message::SplitHorizontal, t),
         menu_item("Split Vertical", "", Message::SplitVertical, t),

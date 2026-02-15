@@ -1,4 +1,59 @@
 use iced::Color;
+use serde::{Deserialize, Serialize};
+
+/// Serializable theme colors for import/export.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ThemeColors {
+    pub name: String,
+    pub is_light: bool,
+    pub background: String,
+    pub tab_bar_bg: String,
+    pub tab_active_bg: String,
+    pub tab_inactive_bg: String,
+    pub status_bar_bg: String,
+    pub text: String,
+    pub text_dim: String,
+    pub accent: String,
+    pub close_hover: String,
+    pub border: String,
+    pub menu_bg: String,
+    pub menu_hover: String,
+    pub separator: String,
+    pub dialog_bg: String,
+    pub button_bg: String,
+    pub editor_bg: String,
+    pub gutter_bg: String,
+    pub selection_bg: String,
+    pub search_highlight: String,
+}
+
+/// Parse a hex color string (#RRGGBB or #RGB) into an iced Color.
+pub fn parse_hex_color(hex: &str) -> Option<Color> {
+    let hex = hex.trim().trim_start_matches('#');
+    match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Color::from_rgb8(r, g, b))
+        }
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            Some(Color::from_rgb8(r * 17, g * 17, b * 17))
+        }
+        _ => None,
+    }
+}
+
+/// Convert an iced Color to a hex string (#RRGGBB).
+pub fn color_to_hex(c: &Color) -> String {
+    let r = (c.r * 255.0).round() as u8;
+    let g = (c.g * 255.0).round() as u8;
+    let b = (c.b * 255.0).round() as u8;
+    format!("#{:02X}{:02X}{:02X}", r, g, b)
+}
 
 #[derive(Debug, Clone)]
 pub struct AppTheme {
@@ -188,6 +243,80 @@ impl AppTheme {
             gutter_bg: Color::from_rgb(0.933, 0.910, 0.835),
             selection_bg: Color::from_rgb(0.898, 0.878, 0.812),
             search_highlight: Color::from_rgb(0.710, 0.537, 0.0),
+        }
+    }
+
+    /// Export theme to a serializable ThemeColors.
+    pub fn to_theme_colors(&self) -> ThemeColors {
+        ThemeColors {
+            name: self.name.clone(),
+            is_light: self.is_light,
+            background: color_to_hex(&self.background),
+            tab_bar_bg: color_to_hex(&self.tab_bar_bg),
+            tab_active_bg: color_to_hex(&self.tab_active_bg),
+            tab_inactive_bg: color_to_hex(&self.tab_inactive_bg),
+            status_bar_bg: color_to_hex(&self.status_bar_bg),
+            text: color_to_hex(&self.text),
+            text_dim: color_to_hex(&self.text_dim),
+            accent: color_to_hex(&self.accent),
+            close_hover: color_to_hex(&self.close_hover),
+            border: color_to_hex(&self.border),
+            menu_bg: color_to_hex(&self.menu_bg),
+            menu_hover: color_to_hex(&self.menu_hover),
+            separator: color_to_hex(&self.separator),
+            dialog_bg: color_to_hex(&self.dialog_bg),
+            button_bg: color_to_hex(&self.button_bg),
+            editor_bg: color_to_hex(&self.editor_bg),
+            gutter_bg: color_to_hex(&self.gutter_bg),
+            selection_bg: color_to_hex(&self.selection_bg),
+            search_highlight: color_to_hex(&self.search_highlight),
+        }
+    }
+
+    /// Import theme from ThemeColors.
+    pub fn from_theme_colors(tc: &ThemeColors) -> Option<Self> {
+        Some(Self {
+            name: tc.name.clone(),
+            is_light: tc.is_light,
+            background: parse_hex_color(&tc.background)?,
+            tab_bar_bg: parse_hex_color(&tc.tab_bar_bg)?,
+            tab_active_bg: parse_hex_color(&tc.tab_active_bg)?,
+            tab_inactive_bg: parse_hex_color(&tc.tab_inactive_bg)?,
+            status_bar_bg: parse_hex_color(&tc.status_bar_bg)?,
+            text: parse_hex_color(&tc.text)?,
+            text_dim: parse_hex_color(&tc.text_dim)?,
+            accent: parse_hex_color(&tc.accent)?,
+            close_hover: parse_hex_color(&tc.close_hover)?,
+            border: parse_hex_color(&tc.border)?,
+            menu_bg: parse_hex_color(&tc.menu_bg)?,
+            menu_hover: parse_hex_color(&tc.menu_hover)?,
+            separator: parse_hex_color(&tc.separator)?,
+            dialog_bg: parse_hex_color(&tc.dialog_bg)?,
+            button_bg: parse_hex_color(&tc.button_bg)?,
+            editor_bg: parse_hex_color(&tc.editor_bg)?,
+            gutter_bg: parse_hex_color(&tc.gutter_bg)?,
+            selection_bg: parse_hex_color(&tc.selection_bg)?,
+            search_highlight: parse_hex_color(&tc.search_highlight)?,
+        })
+    }
+
+    /// Apply color overrides from settings.
+    pub fn apply_color_overrides(&mut self, settings: &crate::io::settings::AppSettings) {
+        if let Some(ref hex) = settings.color_background {
+            if let Some(c) = parse_hex_color(hex) {
+                self.editor_bg = c;
+                self.background = c;
+            }
+        }
+        if let Some(ref hex) = settings.color_foreground {
+            if let Some(c) = parse_hex_color(hex) {
+                self.text = c;
+            }
+        }
+        if let Some(ref hex) = settings.color_selection {
+            if let Some(c) = parse_hex_color(hex) {
+                self.selection_bg = c;
+            }
         }
     }
 }
