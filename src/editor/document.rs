@@ -15,6 +15,20 @@ pub enum Encoding {
     ASCII,
 }
 
+impl Encoding {
+    /// Parse an encoding name from a CLI string (case-insensitive).
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s.to_lowercase().replace('-', "").as_str() {
+            "utf8" => Some(Encoding::UTF8),
+            "utf8bom" => Some(Encoding::UTF8BOM),
+            "utf16le" => Some(Encoding::UTF16LE),
+            "utf16be" => Some(Encoding::UTF16BE),
+            "ascii" | "latin1" => Some(Encoding::ASCII),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineEnding {
     CRLF,

@@ -3,6 +3,7 @@
 
 fn main() -> iced::Result {
     use notepadppp::ui_iced::app;
+    use notepadppp::platform::single_instance::{self, InstanceMessage, SingleInstanceResult};
 
     env_logger::init();
 
@@ -30,6 +31,36 @@ fn main() -> iced::Result {
         handle_shell_registration(&cli);
         std::process::exit(0);
     }
+
+    // Single instance: try to reuse existing instance unless --new-instance
+    if !cli.new_instance {
+        let msg = InstanceMessage {
+            files: cli.files.clone(),
+            goto_line: cli.goto_line,
+            goto_column: cli.goto_column,
+            encoding: cli.encoding.clone(),
+            language: cli.language.clone(),
+            read_only: cli.read_only,
+            new_tab_group: cli.new_tab_group,
+        };
+        match single_instance::try_single_instance(msg) {
+            SingleInstanceResult::Secondary => {
+                // Files sent to existing instance — exit
+                std::process::exit(0);
+            }
+            SingleInstanceResult::Primary(listener) => {
+                app::INSTANCE_LISTENER
+                    .set(std::sync::Mutex::new(Some(listener)))
+                    .ok();
+            }
+            SingleInstanceResult::Unavailable(e) => {
+                log::warn!("Single instance unavailable: {e}");
+            }
+        }
+    }
+
+    // Store CLI args so the app's Default impl can read them
+    app::CLI_ARGS.set(cli).ok();
 
     iced::application(app::title, app::update, app::view)
         .subscription(app::subscription)

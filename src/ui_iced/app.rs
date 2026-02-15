@@ -11,12 +11,21 @@ use crate::editor::tab_manager::TabManager;
 use crate::editor::marks::MarkManager;
 use crate::search::{SearchEngine, SearchMatch, SearchMode};
 use crate::search::find_in_files::FileSearchResult;
+use crate::platform::cli::CliArgs;
+use crate::platform::single_instance::InstanceListener;
 
 use super::search_results_panel::SearchResultsManager;
 
 use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
 use super::theme::{AppColors, AppTheme};
+
+/// CLI arguments passed from main() to the app via OnceLock.
+pub static CLI_ARGS: std::sync::OnceLock<CliArgs> = std::sync::OnceLock::new();
+
+/// Instance listener for single-instance mode, passed from main().
+pub static INSTANCE_LISTENER: std::sync::OnceLock<std::sync::Mutex<Option<InstanceListener>>> =
+    std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SplitMode {
@@ -308,6 +317,9 @@ pub enum Message {
     ClearSearchResults,
     ToggleSearchResultCollapse(usize),
     ClickSearchResultEntry(usize, usize),
+
+    // Single instance
+    CheckInstance(iced::time::Instant),
 }
 
 pub struct NotepadIced {
@@ -444,7 +456,7 @@ impl Default for NotepadIced {
         )
         .unwrap_or_default();
         let theme = AppColors::theme_by_name(&settings.theme);
-        Self {
+        let mut state = Self {
             tab_manager: TabManager::new(),
             tab_contents: vec![TabContent::new()],
             active_menu: None,
@@ -521,6 +533,106 @@ impl Default for NotepadIced {
             mark_manager: MarkManager::default(),
             show_search_results_panel: false,
             search_results_panel: SearchResultsManager::default(),
+        };
+
+        // Apply CLI arguments if provided
+        if let Some(cli) = CLI_ARGS.get() {
+            open_cli_files(&mut state, cli);
+        }
+
+        state
+    }
+}
+
+/// Open files from CLI arguments, applying encoding/language/read_only/goto overrides.
+fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
+    let mut opened_any = false;
+    for path in &cli.files {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            state.file_extension = ext.to_lowercase();
+        }
+        match state.tab_manager.open_file(path) {
+            Ok(idx) => {
+                let doc = state.tab_manager.get_document_mut(idx).unwrap();
+                if let Some(ref enc_name) = cli.encoding {
+                    if let Some(enc) = Encoding::from_name(enc_name) {
+                        doc.encoding = enc;
+                    }
+                }
+                if let Some(ref lang) = cli.language {
+                    doc.language = lang.clone();
+                }
+                if cli.read_only {
+                    doc.read_only = true;
+                }
+                let buf_text = doc.buffer.text();
+                state.fold_manager.detect_regions(&buf_text);
+                state.tab_contents.push(TabContent::with_text(&buf_text));
+                opened_any = true;
+            }
+            Err(e) => {
+                log::error!("Failed to open CLI file: {}", e);
+            }
+        }
+    }
+    // Apply goto_line/goto_column to the last opened file
+    if opened_any {
+        if let Some(line) = cli.goto_line {
+            state.tab_manager.active_document_mut().cursor.position.line = line.saturating_sub(1);
+        }
+        if let Some(col) = cli.goto_column {
+            state.tab_manager.active_document_mut().cursor.position.col = col.saturating_sub(1);
+        }
+    }
+}
+
+/// Open files from a single-instance message.
+fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_instance::InstanceMessage) {
+    let mut opened_any = false;
+    for path in &msg.files {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            state.file_extension = ext.to_lowercase();
+        }
+        match state.tab_manager.open_file(path) {
+            Ok(idx) => {
+                let doc = state.tab_manager.get_document_mut(idx).unwrap();
+                if let Some(ref enc_name) = msg.encoding {
+                    if let Some(enc) = Encoding::from_name(enc_name) {
+                        doc.encoding = enc;
+                    }
+                }
+                if let Some(ref lang) = msg.language {
+                    doc.language = lang.clone();
+                }
+                if msg.read_only {
+                    doc.read_only = true;
+                }
+                let buf_text = doc.buffer.text();
+                state.fold_manager.detect_regions(&buf_text);
+                state.tab_contents.push(TabContent::with_text(&buf_text));
+                opened_any = true;
+            }
+            Err(e) => {
+                log::error!("Failed to open instance file: {}", e);
+            }
+        }
+    }
+    if opened_any {
+        if let Some(line) = msg.goto_line {
+            state.tab_manager.active_document_mut().cursor.position.line = line.saturating_sub(1);
+        }
+        if let Some(col) = msg.goto_column {
+            state.tab_manager.active_document_mut().cursor.position.col = col.saturating_sub(1);
         }
     }
 }
@@ -1190,6 +1302,21 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 if let Some(m) = entry.matches.get(match_idx) {
                     state.tab_manager.active_document_mut().cursor.position.line = m.line;
                     state.tab_manager.active_document_mut().cursor.position.col = 0;
+                }
+            }
+            Task::none()
+        }
+
+        // ── Single Instance ──
+        Message::CheckInstance(_) => {
+            if let Some(mutex) = INSTANCE_LISTENER.get() {
+                if let Ok(guard) = mutex.lock() {
+                    if let Some(ref listener) = *guard {
+                        if let Some(msg) = listener.try_recv() {
+                            drop(guard);
+                            open_instance_files(state, &msg);
+                        }
+                    }
                 }
             }
             Task::none()
@@ -3350,7 +3477,17 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
         }
     });
 
-    Subscription::batch(vec![keys, file_drops])
+    let mut subs = vec![keys, file_drops];
+
+    // Poll for incoming single-instance messages
+    if INSTANCE_LISTENER.get().is_some() {
+        subs.push(
+            iced::time::every(std::time::Duration::from_millis(500))
+                .map(Message::CheckInstance),
+        );
+    }
+
+    Subscription::batch(subs)
 }
 
 pub fn theme(state: &NotepadIced) -> Theme {
