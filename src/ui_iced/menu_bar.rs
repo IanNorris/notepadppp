@@ -246,6 +246,10 @@ fn build_search_menu<'a>(expanded: &std::collections::HashSet<String>, t: &AppTh
         menu_item("Find in Files...", "", Message::ShowFindInFiles, t),
         menu_item("Select All Occurrences", "", Message::SelectAllOccurrences, t),
         separator(t),
+        menu_item("Mark All", "", Message::MarkAll, t),
+        menu_item("Clear All Marks", "", Message::ClearAllMarks, t),
+        menu_item("Bookmark Matching Lines", "", Message::BookmarkMatchingLines, t),
+        separator(t),
         menu_item("Go to Line...", "Ctrl+G", Message::GotoLine, t),
         separator(t),
     ];
@@ -256,6 +260,7 @@ fn build_search_menu<'a>(expanded: &std::collections::HashSet<String>, t: &AppTh
         separator(t),
         menu_item("Clear All Bookmarks", "", Message::ClearBookmarks, t),
         menu_item("Copy Bookmarked Lines", "", Message::CopyBookmarkedLines, t),
+        menu_item("Cut Bookmarked Lines", "", Message::CutBookmarkedLines, t),
         menu_item("Remove Bookmarked Lines", "", Message::RemoveBookmarkedLines, t),
         menu_item("Remove Unbookmarked Lines", "", Message::RemoveUnbookmarkedLines, t),
     ], t);
@@ -270,6 +275,7 @@ fn build_view_menu<'a>(state: &super::app::NotepadIced, expanded: &std::collecti
         check_item("Status Bar", state.show_status_bar, Message::ToggleStatusBar, t),
         check_item("Minimap", state.show_minimap, Message::ToggleMinimap, t),
         check_item("Function List", state.show_function_list, Message::ToggleFunctionList, t),
+        check_item("Search Results", state.show_search_results_panel, Message::ToggleSearchResultsPanel, t),
         separator(t),
         menu_item("Split Horizontal", "", Message::SplitHorizontal, t),
         menu_item("Split Vertical", "", Message::SplitVertical, t),

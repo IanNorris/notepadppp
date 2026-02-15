@@ -11,4 +11,5 @@ pub mod markdown_panel;
 pub mod menu_bar;
 pub mod preferences_dialog;
 pub mod search_panel;
+pub mod search_results_panel;
 pub mod theme;

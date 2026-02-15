@@ -7,8 +7,11 @@ use crate::editor::document::{Encoding, LineEnding};
 use crate::editor::folding::FoldManager;
 use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
+use crate::editor::marks::MarkManager;
 use crate::search::{SearchEngine, SearchMatch, SearchMode};
 use crate::search::find_in_files::FileSearchResult;
+
+use super::search_results_panel::SearchResultsManager;
 
 use super::highlighter::{SyntectHighlighter, SyntectSettings};
 use super::menu_bar;
@@ -258,6 +261,22 @@ pub enum Message {
     DragFifStart,
     DragFifMove(iced::Point),
     DragFifEnd,
+
+    // Mark All
+    MarkAll,
+    ClearAllMarks,
+
+    // Bookmark from search
+    BookmarkMatchingLines,
+
+    // Cut bookmarked lines
+    CutBookmarkedLines,
+
+    // Search results panel
+    ToggleSearchResultsPanel,
+    ClearSearchResults,
+    ToggleSearchResultCollapse(usize),
+    ClickSearchResultEntry(usize, usize),
 }
 
 pub struct NotepadIced {
@@ -371,6 +390,13 @@ pub struct NotepadIced {
 
     // Double-click tracking for tab close
     pub last_tab_click: Option<(usize, std::time::Instant)>,
+
+    // Mark All (persistent highlighting)
+    pub mark_manager: MarkManager,
+
+    // Search results panel
+    pub show_search_results_panel: bool,
+    pub search_results_panel: SearchResultsManager,
 }
 
 impl Default for NotepadIced {
@@ -451,6 +477,9 @@ impl Default for NotepadIced {
             tab_context_menu: None,
             is_fullscreen: false,
             last_tab_click: None,
+            mark_manager: MarkManager::default(),
+            show_search_results_panel: false,
+            search_results_panel: SearchResultsManager::default(),
         }
     }
 }
@@ -1037,6 +1066,73 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             let result = state.tab_manager.active_document().bookmarks.remove_unbookmarked_lines(&text);
             set_buffer_text(state, &result);
             state.tab_manager.active_document_mut().bookmarks.clear();
+            Task::none()
+        }
+        Message::CutBookmarkedLines => {
+            let text = get_buffer_text(state);
+            let (remaining, cut) = state.tab_manager.active_document().bookmarks.cut_bookmarked_lines(&text);
+            if !cut.is_empty() {
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(cut);
+                }
+                set_buffer_text(state, &remaining);
+                state.tab_manager.active_document_mut().bookmarks.clear();
+            }
+            Task::none()
+        }
+
+        // ── Mark All ──
+        Message::MarkAll => {
+            if !state.search_matches.is_empty() {
+                let ranges: Vec<(usize, usize)> = state.search_matches.iter()
+                    .map(|m| (m.start, m.end))
+                    .collect();
+                state.mark_manager.mark_all(ranges);
+                // Also add to search results panel
+                let results: Vec<super::search_results_panel::SearchResultMatch> = state.search_matches.iter()
+                    .map(|m| super::search_results_panel::SearchResultMatch {
+                        line: m.line,
+                        line_text: m.line_text.clone(),
+                    })
+                    .collect();
+                state.search_results_panel.add_search(state.search_query.clone(), results);
+            }
+            Task::none()
+        }
+        Message::ClearAllMarks => {
+            state.mark_manager.clear();
+            Task::none()
+        }
+
+        // ── Bookmark matching lines ──
+        Message::BookmarkMatchingLines => {
+            for m in &state.search_matches {
+                state.tab_manager.active_document_mut().bookmarks.add(m.line);
+            }
+            Task::none()
+        }
+
+        // ── Search Results Panel ──
+        Message::ToggleSearchResultsPanel => {
+            state.show_search_results_panel = !state.show_search_results_panel;
+            state.active_menu = None;
+            Task::none()
+        }
+        Message::ClearSearchResults => {
+            state.search_results_panel.clear();
+            Task::none()
+        }
+        Message::ToggleSearchResultCollapse(idx) => {
+            state.search_results_panel.toggle_collapse(idx);
+            Task::none()
+        }
+        Message::ClickSearchResultEntry(entry_idx, match_idx) => {
+            if let Some(entry) = state.search_results_panel.entries.get(entry_idx) {
+                if let Some(m) = entry.matches.get(match_idx) {
+                    state.tab_manager.active_document_mut().cursor.position.line = m.line;
+                    state.tab_manager.active_document_mut().cursor.position.col = 0;
+                }
+            }
             Task::none()
         }
 
@@ -2167,6 +2263,13 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
     };
 
     let mut base_content = column![menu_bar, tab_bar_area, main_area];
+
+    // Search results panel (docked below editor)
+    if state.show_search_results_panel {
+        base_content = base_content.push(
+            super::search_results_panel::view_search_results_panel(state, &state.theme)
+        );
+    }
 
     if state.show_status_bar {
         base_content = base_content.push(view_status_bar(state));

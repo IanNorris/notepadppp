@@ -169,3 +169,55 @@ fn test_duplicate_add() {
     bm.add(5);
     assert_eq!(bm.count(), 1);
 }
+
+// ── New tests for bookmarked_lines_text and cut ──
+
+#[test]
+fn test_bookmarked_lines_text() {
+    let mut bm = BookmarkManager::default();
+    let text = "alpha\nbeta\ngamma\ndelta";
+    bm.add(1);
+    bm.add(3);
+    let result = bm.bookmarked_lines_text(text);
+    assert_eq!(result, "beta\ndelta");
+}
+
+#[test]
+fn test_bookmarked_lines_text_empty() {
+    let bm = BookmarkManager::default();
+    let text = "hello\nworld";
+    let result = bm.bookmarked_lines_text(text);
+    assert_eq!(result, "");
+}
+
+#[test]
+fn test_cut_bookmarked_lines() {
+    let mut bm = BookmarkManager::default();
+    let text = "keep1\ncut1\nkeep2\ncut2\nkeep3";
+    bm.add(1);
+    bm.add(3);
+    let (remaining, cut) = bm.cut_bookmarked_lines(text);
+    assert_eq!(cut, "cut1\ncut2");
+    assert_eq!(remaining, "keep1\nkeep2\nkeep3");
+}
+
+#[test]
+fn test_cut_bookmarked_lines_none() {
+    let bm = BookmarkManager::default();
+    let text = "line1\nline2\nline3";
+    let (remaining, cut) = bm.cut_bookmarked_lines(text);
+    assert_eq!(cut, "");
+    assert_eq!(remaining, text);
+}
+
+#[test]
+fn test_cut_bookmarked_lines_all() {
+    let mut bm = BookmarkManager::default();
+    let text = "a\nb\nc";
+    bm.add(0);
+    bm.add(1);
+    bm.add(2);
+    let (remaining, cut) = bm.cut_bookmarked_lines(text);
+    assert_eq!(cut, "a\nb\nc");
+    assert_eq!(remaining, "");
+}

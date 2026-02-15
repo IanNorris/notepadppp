@@ -70,6 +70,18 @@ impl BookmarkManager {
             .collect()
     }
 
+    /// Get all bookmarked lines joined as a single string.
+    pub fn bookmarked_lines_text(&self, text: &str) -> String {
+        self.bookmarked_lines(text).join("\n")
+    }
+
+    /// Remove bookmarked lines and return both the remaining text and the cut text.
+    pub fn cut_bookmarked_lines(&self, text: &str) -> (String, String) {
+        let cut = self.bookmarked_lines_text(text);
+        let remaining = self.remove_bookmarked_lines(text);
+        (remaining, cut)
+    }
+
     /// Remove all bookmarked lines from text.
     pub fn remove_bookmarked_lines(&self, text: &str) -> String {
         text.lines()

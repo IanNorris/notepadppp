@@ -92,7 +92,20 @@ pub fn view_search_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'
     ]
     .padding([0, 8]);
 
-    let mut panel = column![title_bar, find_row, match_info].spacing(2);
+    // Action buttons row (Mark All, Bookmark Lines)
+    let mark_btn = action_button("Mark All", Message::MarkAll, theme);
+    let clear_marks_btn = action_button("Clear Marks", Message::ClearAllMarks, theme);
+    let bookmark_btn = action_button("Bookmark Lines", Message::BookmarkMatchingLines, theme);
+
+    let action_row = row![
+        mark_btn,
+        clear_marks_btn,
+        bookmark_btn,
+    ]
+    .spacing(4)
+    .padding([2, 8]);
+
+    let mut panel = column![title_bar, find_row, match_info, action_row].spacing(2);
 
     // Replace row
     if state.show_replace {

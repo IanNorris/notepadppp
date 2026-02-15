@@ -12,6 +12,7 @@ pub mod folding;
 pub mod function_list;
 pub mod indent;
 pub mod macros;
+pub mod marks;
 pub mod multi_cursor;
 pub mod syntax;
 pub mod tab_manager;
