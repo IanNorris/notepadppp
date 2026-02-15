@@ -313,16 +313,16 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [ ] Disassembly alongside hex view
 
 ### 9.7 Quick Hash & Encoding (Selection Tools)
-- [ ] SHA-256 hash of selection
-- [ ] SHA-1 hash of selection
-- [ ] MD5 hash of selection
-- [ ] CRC32 of selection
-- [ ] Base64 encode/decode selection
-- [ ] URL encode/decode selection
-- [ ] Hex encode/decode selection
-- [ ] HTML entity encode/decode selection
-- [ ] Right-click context menu for quick hash/encode actions
-- [ ] Results shown inline or in status bar / popup
+- [x] SHA-256 hash of selection
+- [x] SHA-1 hash of selection
+- [x] MD5 hash of selection
+- [x] CRC32 of selection
+- [x] Base64 encode/decode selection
+- [x] URL encode/decode selection
+- [x] Hex encode/decode selection
+- [x] HTML entity encode/decode selection
+- [x] Right-click context menu for quick hash/encode actions
+- [x] Results shown inline or in status bar / popup
 
 ---
 
