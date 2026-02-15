@@ -4,6 +4,7 @@ use iced::advanced::text::Wrapping;
 use iced::{Element, Length, Subscription, Task, Theme};
 
 use crate::editor::document::{Encoding, LineEnding};
+use crate::editor::folding::FoldManager;
 use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
 use crate::search::{SearchEngine, SearchMatch, SearchMode};
@@ -120,6 +121,7 @@ pub enum Message {
     ZoomOut,
     ZoomReset,
     ToggleFold,
+    ToggleFoldAt(usize),
     FoldAll,
     UnfoldAll,
     FoldLevel(usize),
@@ -255,6 +257,9 @@ pub struct NotepadIced {
 
     // Syntax highlighting
     pub file_extension: String,
+
+    // Code folding
+    pub fold_manager: FoldManager,
 }
 
 impl Default for NotepadIced {
@@ -297,6 +302,7 @@ impl Default for NotepadIced {
             macro_recorder: MacroRecorder::new(),
             last_macro: None,
             file_extension: String::new(),
+            fold_manager: FoldManager::new(),
         }
     }
 }
@@ -346,6 +352,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                         doc.buffer.delete(0, len);
                     }
                     doc.buffer.insert(0, &new_text);
+                    state.fold_manager.detect_regions(&new_text);
                 }
             }
             Task::none()
@@ -384,10 +391,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     Ok(idx) => {
                         let doc = state.tab_manager.get_document(idx).unwrap();
                         let buf_text = doc.buffer.text();
+                        state.fold_manager.detect_regions(&buf_text);
                         state.tab_contents.push(TabContent::with_text(&buf_text));
                     }
                     Err(_) => {
                         state.tab_manager.new_tab();
+                        state.fold_manager.detect_regions(&content);
                         state.tab_contents.push(TabContent::with_text(&content));
                     }
                 }
@@ -448,6 +457,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     }
                 } else {
                     state.file_extension.clear();
+                }
+                // Re-detect fold regions for the newly active tab
+                if let Some(tc) = state.tab_contents.get(idx) {
+                    let text = tc.content.text();
+                    state.fold_manager.detect_regions(&text);
                 }
             }
             Task::none()
@@ -981,19 +995,26 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleFold => {
-            log::info!("Toggle fold");
+            if let Some(tc) = state.tab_contents.get(state.tab_manager.active_index()) {
+                let line = tc.content.cursor_position().0;
+                state.fold_manager.toggle_fold(line);
+            }
+            Task::none()
+        }
+        Message::ToggleFoldAt(line) => {
+            state.fold_manager.toggle_fold(line);
             Task::none()
         }
         Message::FoldAll => {
-            log::info!("Fold all");
+            state.fold_manager.fold_all();
             Task::none()
         }
         Message::UnfoldAll => {
-            log::info!("Unfold all");
+            state.fold_manager.unfold_all();
             Task::none()
         }
         Message::FoldLevel(level) => {
-            log::info!("Fold level {}", level);
+            state.fold_manager.fold_level(level);
             Task::none()
         }
 
@@ -1813,20 +1834,41 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
         if state.show_line_numbers {
             let content_text = tc.content.text();
             let line_count = content_text.lines().count().max(1);
-            let gutter_width = 40.0;
+            let gutter_width = 55.0;
 
             let mut gutter_col = column![];
             for i in 1..=line_count {
-                gutter_col = gutter_col.push(
-                    container(
-                        text(format!("{}", i))
-                            .size(state.font_size)
-                            .color(AppColors::TEXT_DIM),
+                let line_idx = i - 1; // 0-based
+                let fold_indicator = if state.fold_manager.is_folded(line_idx) {
+                    "[+] "
+                } else if state.fold_manager.is_fold_point(line_idx) {
+                    "[−] "
+                } else {
+                    "    "
+                };
+
+                let line_label = text(format!("{}{}", fold_indicator, i))
+                    .size(state.font_size)
+                    .color(AppColors::TEXT_DIM);
+
+                let line_widget: Element<'_, Message> = if state.fold_manager.is_fold_point(line_idx) {
+                    mouse_area(
+                        container(line_label)
+                            .width(Length::Fixed(gutter_width))
+                            .align_x(iced::alignment::Horizontal::Right)
+                            .padding([0, 4]),
                     )
-                    .width(Length::Fixed(gutter_width))
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .padding([0, 4]),
-                );
+                    .on_press(Message::ToggleFoldAt(line_idx))
+                    .into()
+                } else {
+                    container(line_label)
+                        .width(Length::Fixed(gutter_width))
+                        .align_x(iced::alignment::Horizontal::Right)
+                        .padding([0, 4])
+                        .into()
+                };
+
+                gutter_col = gutter_col.push(line_widget);
             }
 
             let gutter = container(scrollable(gutter_col))
