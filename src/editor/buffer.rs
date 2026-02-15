@@ -229,4 +229,29 @@ impl TextBuffer {
         self.modified = true;
         true
     }
+
+    /// Move text from [start, end) to `dest` position.
+    /// If `dest` falls within [start, end), this is a no-op.
+    pub fn move_text(&mut self, start: usize, end: usize, dest: usize) {
+        if start >= end || start > self.len_bytes() || end > self.len_bytes() {
+            return;
+        }
+        if dest >= start && dest <= end {
+            return;
+        }
+        let text = self.rope.byte_slice(start..end).to_string();
+        // Delete first, then insert at adjusted position
+        self.delete(start, end);
+        let adjusted_dest = if dest > end { dest - (end - start) } else { dest };
+        self.insert(adjusted_dest, &text);
+    }
+
+    /// Copy text from [start, end) to `dest` position (text remains at original location).
+    pub fn copy_text_to(&mut self, start: usize, end: usize, dest: usize) {
+        if start >= end || start > self.len_bytes() || end > self.len_bytes() {
+            return;
+        }
+        let text = self.rope.byte_slice(start..end).to_string();
+        self.insert(dest, &text);
+    }
 }

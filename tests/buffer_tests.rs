@@ -521,3 +521,89 @@ fn line_col_at_boundary_multiline() {
     // len_bytes = 5, should return (1, 2)
     assert_eq!(buf.line_col(5), Some((1, 2)));
 }
+
+// ── move_text / copy_text_to ──
+
+#[test]
+fn move_text_forward() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.move_text(0, 2, 4); // move "ab" to position 4
+    assert_eq!(buf.text(), "cdabef");
+}
+
+#[test]
+fn move_text_backward() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.move_text(4, 6, 0); // move "ef" to position 0
+    assert_eq!(buf.text(), "efabcd");
+}
+
+#[test]
+fn move_text_within_range_noop() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.move_text(1, 4, 2); // dest inside [1, 4) => no-op
+    assert_eq!(buf.text(), "abcdef");
+}
+
+#[test]
+fn move_text_same_position() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.move_text(2, 4, 2); // dest == start => no-op
+    assert_eq!(buf.text(), "abcdef");
+}
+
+#[test]
+fn move_text_out_of_bounds() {
+    let mut buf = TextBuffer::from_str("abc");
+    buf.move_text(0, 10, 0); // end > len => no-op
+    assert_eq!(buf.text(), "abc");
+}
+
+#[test]
+fn copy_text_to_position() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.copy_text_to(0, 2, 4); // copy "ab" to position 4
+    assert_eq!(buf.text(), "abcdabef");
+}
+
+#[test]
+fn copy_text_to_start() {
+    let mut buf = TextBuffer::from_str("abcdef");
+    buf.copy_text_to(4, 6, 0); // copy "ef" to position 0
+    assert_eq!(buf.text(), "efabcdef");
+}
+
+#[test]
+fn copy_text_to_out_of_bounds() {
+    let mut buf = TextBuffer::from_str("abc");
+    buf.copy_text_to(0, 10, 0); // end > len => no-op
+    assert_eq!(buf.text(), "abc");
+}
+
+// ── Tab reorder with move_tab ──
+
+#[test]
+fn move_tab_active_follows_non_active() {
+    use notepadppp::editor::tab_manager::TabManager;
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    mgr.new_tab();
+    // 3 tabs: 0, 1, 2. Active is 2.
+    mgr.set_active(1);
+    // Move tab 0 to position 2
+    mgr.move_tab(0, 2);
+    // Active was 1, which should shift to 0 (since tab before it was removed)
+    assert_eq!(mgr.active_index(), 0);
+}
+
+#[test]
+fn move_tab_out_of_bounds() {
+    use notepadppp::editor::tab_manager::TabManager;
+    let mut mgr = TabManager::new();
+    mgr.new_tab();
+    let t0 = mgr.get_tab_title(0);
+    let t1 = mgr.get_tab_title(1);
+    mgr.move_tab(0, 99); // out of bounds => no-op
+    assert_eq!(mgr.get_tab_title(0), t0);
+    assert_eq!(mgr.get_tab_title(1), t1);
+}

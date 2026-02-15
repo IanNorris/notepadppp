@@ -10,7 +10,7 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 - [x] Open, create, save, save-as, close files
 - [x] Cut, copy, paste, undo/redo (unlimited history)
 - [x] Text selection (character, word, line, all)
-- [ ] Drag and drop text
+- [x] Drag and drop text
 - [x] Word wrap toggle
 - [x] Line numbering in gutter
 - [x] Cursor position display (line, column, selection count) in status bar
@@ -19,11 +19,12 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 ### 1.2 Tabbed Multi-Document Interface
 - [x] Multiple files open in tabs
 - [x] Tab context menu (close, close all, close others, close to the right)
-- [ ] Tab reordering via drag and drop
+- [x] Tab reordering via drag and drop
 - [x] New untitled tabs
 - [x] Modified indicator on tabs (dot/asterisk)
 - [x] Tab scrolling when many tabs open
 - [x] Double-click tab to close
+- [x] Middle-click tab to close
 
 ### 1.3 Basic File Operations
 - [x] Recent file history
@@ -45,9 +46,9 @@ A comprehensive feature list for Notepad+++, a from-scratch Rust text editor tar
 
 ### 2.1 Split View / Multi-Panel Editing
 - [x] Split editor into two panels (horizontal/vertical)
-- [ ] Clone document to other view (same file in two panels)
+- [x] Clone document to other view (same file in two panels)
 - [ ] Move tab between views
-- [ ] Independent scrolling per panel
+- [x] Independent scrolling per panel
 
 ### 2.2 Window Management
 - [ ] Multiple independent windows

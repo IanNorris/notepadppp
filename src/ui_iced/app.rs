@@ -1,9 +1,10 @@
 use iced::keyboard;
+use iced::mouse;
 use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, stack, text, text_editor, Space};
 use iced::advanced::text::Wrapping;
 use iced::{Element, Length, Subscription, Task, Theme};
 
-use crate::editor::document::{Encoding, LineEnding};
+use crate::editor::document::{Document, Encoding, LineEnding};
 use crate::editor::folding::FoldManager;
 use crate::editor::macros::MacroRecorder;
 use crate::editor::tab_manager::TabManager;
@@ -22,6 +23,14 @@ pub enum SplitMode {
     None,
     Horizontal, // side by side
     Vertical,   // top/bottom
+}
+
+/// State for tab drag-reordering.
+#[derive(Debug, Clone)]
+pub struct TabDragState {
+    pub from_index: usize,
+    pub is_split: bool,
+    pub target_index: Option<usize>,
 }
 
 /// Per-tab state that pairs an iced text_editor::Content with our Document index.
@@ -182,7 +191,17 @@ pub enum Message {
     TabContextCloseOthers(usize, bool),
     TabContextCloseAll(bool),
     TabContextMoveToOtherPane(usize, bool),
+    TabContextCloneToOtherView(usize, bool),
     CloseTabContextMenu,
+
+    // Middle-click tab close
+    MiddleClickTab(usize, bool), // (tab_index, is_split_pane)
+
+    // Tab drag reordering
+    TabDragStart(usize, bool),        // (tab_index, is_split_pane)
+    TabDragOver(usize, bool),         // (target_index, is_split_pane)
+    TabDragEnd,
+    TabDragCancel,
 
     // Macro
     ToggleMacroRecording,
@@ -391,6 +410,9 @@ pub struct NotepadIced {
     // Double-click tracking for tab close
     pub last_tab_click: Option<(usize, std::time::Instant)>,
 
+    // Tab drag reordering state
+    pub tab_drag: Option<TabDragState>,
+
     // Mark All (persistent highlighting)
     pub mark_manager: MarkManager,
 
@@ -477,6 +499,7 @@ impl Default for NotepadIced {
             tab_context_menu: None,
             is_fullscreen: false,
             last_tab_click: None,
+            tab_drag: None,
             mark_manager: MarkManager::default(),
             show_search_results_panel: false,
             search_results_panel: SearchResultsManager::default(),
@@ -525,6 +548,10 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::TabContextMenu(_, _) | Message::TabContextClose(_, _)
             | Message::TabContextCloseOthers(_, _) | Message::TabContextCloseAll(_)
             | Message::TabContextMoveToOtherPane(_, _) | Message::CloseTabContextMenu
+            | Message::TabContextCloneToOtherView(_, _)
+            | Message::MiddleClickTab(_, _)
+            | Message::TabDragStart(_, _) | Message::TabDragOver(_, _)
+            | Message::TabDragEnd | Message::TabDragCancel
     );
     if should_close_menu {
         state.active_menu = None;
@@ -655,10 +682,18 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             if let Some((last_idx, last_time)) = state.last_tab_click {
                 if last_idx == idx && now.duration_since(last_time).as_millis() < 400 {
                     state.last_tab_click = None;
+                    state.tab_drag = None;
                     return update(state, Message::CloseTab(idx));
                 }
             }
             state.last_tab_click = Some((idx, now));
+
+            // Start tab drag
+            state.tab_drag = Some(TabDragState {
+                from_index: idx,
+                is_split: false,
+                target_index: None,
+            });
 
             if idx < state.tab_manager.tab_count() {
                 state.tab_manager.set_active(idx);
@@ -1900,6 +1935,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::SplitSelectTab(idx) => {
             state.active_pane = 1;
+            // Start tab drag for split pane
+            state.tab_drag = Some(TabDragState {
+                from_index: idx,
+                is_split: true,
+                target_index: None,
+            });
             if idx < state.split_tab_manager.tab_count() {
                 state.split_tab_manager.set_active(idx);
                 if let Some(path) = &state.split_tab_manager.active_document().path {
@@ -2134,6 +2175,113 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             } else {
                 return update(state, Message::MoveTabToSplit(idx));
             }
+        }
+        Message::TabContextCloneToOtherView(idx, is_split) => {
+            state.tab_context_menu = None;
+            if state.split_mode == SplitMode::None {
+                // Activate split view first
+                state.split_mode = SplitMode::Horizontal;
+                state.split_tab_manager = TabManager::new();
+                state.split_tab_contents = vec![TabContent::new()];
+                state.split_font_size = state.font_size;
+                state.split_file_extension.clear();
+            }
+            if is_split {
+                // Clone from split to primary
+                if let Some(doc) = state.split_tab_manager.get_document(idx) {
+                    let text = doc.buffer.text();
+                    let cloned = Document::from_str(&text)
+                        .with_encoding(doc.encoding)
+                        .with_line_ending(doc.line_ending);
+                    let cloned = if let Some(ref p) = doc.path {
+                        cloned.with_path(p.clone())
+                    } else {
+                        cloned
+                    };
+                    if let Some(ext) = cloned.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+                        state.file_extension = ext.to_lowercase();
+                    }
+                    state.tab_manager.add_document(cloned);
+                    state.tab_contents.push(TabContent::with_text(&text));
+                }
+            } else {
+                // Clone from primary to split
+                if let Some(doc) = state.tab_manager.get_document(idx) {
+                    let text = doc.buffer.text();
+                    let cloned = Document::from_str(&text)
+                        .with_encoding(doc.encoding)
+                        .with_line_ending(doc.line_ending);
+                    let cloned = if let Some(ref p) = doc.path {
+                        cloned.with_path(p.clone())
+                    } else {
+                        cloned
+                    };
+                    if let Some(ext) = cloned.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+                        state.split_file_extension = ext.to_lowercase();
+                    }
+                    // Remove default empty tab if it's the only one
+                    if state.split_tab_manager.tab_count() == 1 {
+                        let split_doc = state.split_tab_manager.active_document();
+                        if split_doc.buffer.text().trim().is_empty() && split_doc.path.is_none() {
+                            state.split_tab_contents.remove(0);
+                            state.split_tab_manager.remove_document(0);
+                        }
+                    }
+                    state.split_tab_manager.add_document(cloned);
+                    state.split_tab_contents.push(TabContent::with_text(&text));
+                }
+            }
+            Task::none()
+        }
+
+        // ── Middle-click tab close ──
+        Message::MiddleClickTab(idx, is_split) => {
+            if is_split {
+                return update(state, Message::SplitCloseTab(idx));
+            } else {
+                return update(state, Message::CloseTab(idx));
+            }
+        }
+
+        // ── Tab drag reordering ──
+        Message::TabDragStart(idx, is_split) => {
+            state.tab_drag = Some(TabDragState {
+                from_index: idx,
+                is_split,
+                target_index: None,
+            });
+            Task::none()
+        }
+        Message::TabDragOver(target_idx, is_split) => {
+            if let Some(ref mut drag) = state.tab_drag {
+                if drag.is_split == is_split {
+                    drag.target_index = Some(target_idx);
+                }
+            }
+            Task::none()
+        }
+        Message::TabDragEnd => {
+            if let Some(drag) = state.tab_drag.take() {
+                if let Some(to) = drag.target_index {
+                    if drag.from_index != to {
+                        if drag.is_split {
+                            state.split_tab_manager.move_tab(drag.from_index, to);
+                            // Reorder tab_contents to match
+                            let content = state.split_tab_contents.remove(drag.from_index);
+                            state.split_tab_contents.insert(to, content);
+                        } else {
+                            state.tab_manager.move_tab(drag.from_index, to);
+                            let content = state.tab_contents.remove(drag.from_index);
+                            state.tab_contents.insert(to, content);
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::TabDragCancel => {
+            state.tab_drag = None;
+            Task::none()
         }
     }
 }
@@ -2522,6 +2670,27 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             );
         }
 
+        // Clone to Other View
+        menu_items.push(
+            button(text("Clone to Other View").size(13))
+                .on_press(Message::TabContextCloneToOtherView(tab_idx, is_split))
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(move |_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered | button::Status::Pressed => Some(iced::Background::Color(t_menu_hover)),
+                        _ => None,
+                    };
+                    button::Style {
+                        background: bg,
+                        text_color: t_text,
+                        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                })
+                .into(),
+        );
+
         menu_items.push(
             button(text("Close").size(13))
                 .on_press(Message::TabContextClose(tab_idx, is_split))
@@ -2678,6 +2847,10 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
         match event {
             iced::Event::Window(iced::window::Event::FileDropped(path)) => {
                 Some(Message::FileDropped(path))
+            }
+            // Mouse button release completes tab drag
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Message::TabDragEnd)
             }
             _ => None,
         }
@@ -2859,9 +3032,30 @@ fn view_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab_with_context: Element<'a, Message> = mouse_area(tab)
-            .on_right_press(Message::TabContextMenu(i, false))
-            .into();
+        // Check if this tab is the drag target
+        let is_drag_target = state.tab_drag.as_ref().map_or(false, |d| {
+            !d.is_split && d.target_index == Some(i) && d.from_index != i
+        });
+
+        let tab_with_context: Element<'a, Message> = if is_drag_target {
+            // Show drop indicator: a left border highlight
+            let indicator = container(Space::new(Length::Fixed(2.0), Length::Fill))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_accent)),
+                    ..Default::default()
+                });
+            let tab_with_indicator = row![indicator, mouse_area(tab)
+                .on_right_press(Message::TabContextMenu(i, false))
+                .on_middle_press(Message::MiddleClickTab(i, false))
+                .on_enter(Message::TabDragOver(i, false))];
+            tab_with_indicator.into()
+        } else {
+            mouse_area(tab)
+                .on_right_press(Message::TabContextMenu(i, false))
+                .on_middle_press(Message::MiddleClickTab(i, false))
+                .on_enter(Message::TabDragOver(i, false))
+                .into()
+        };
 
         tabs = tabs.push(tab_with_context);
     }
@@ -3069,9 +3263,28 @@ fn view_split_tab_bar<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 ..Default::default()
             });
 
-        let tab_with_context: Element<'a, Message> = mouse_area(tab)
-            .on_right_press(Message::TabContextMenu(i, true))
-            .into();
+        let is_drag_target = state.tab_drag.as_ref().map_or(false, |d| {
+            d.is_split && d.target_index == Some(i) && d.from_index != i
+        });
+
+        let tab_with_context: Element<'a, Message> = if is_drag_target {
+            let indicator = container(Space::new(Length::Fixed(2.0), Length::Fill))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_accent)),
+                    ..Default::default()
+                });
+            let tab_with_indicator = row![indicator, mouse_area(tab)
+                .on_right_press(Message::TabContextMenu(i, true))
+                .on_middle_press(Message::MiddleClickTab(i, true))
+                .on_enter(Message::TabDragOver(i, true))];
+            tab_with_indicator.into()
+        } else {
+            mouse_area(tab)
+                .on_right_press(Message::TabContextMenu(i, true))
+                .on_middle_press(Message::MiddleClickTab(i, true))
+                .on_enter(Message::TabDragOver(i, true))
+                .into()
+        };
 
         tabs = tabs.push(tab_with_context);
     }
