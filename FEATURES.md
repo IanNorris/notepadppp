@@ -213,7 +213,7 @@ Syntax highlighting for 80+ languages (via syntect) including:
 - [x] Old Mac (CR)
 - [x] EOL display in status bar
 - [x] Convert between line endings
-- [ ] Show/hide EOL characters
+- [x] Show/hide EOL characters
 - [ ] Set default EOL for new files
 - [x] Mixed EOL detection and notification
 
@@ -252,17 +252,17 @@ Syntax highlighting for 80+ languages (via syntect) including:
 ### 8.1 Color Themes
 - [x] Dark theme built-in
 - [x] Light theme built-in
-- [ ] Simple color customization (background, foreground, selection, caret)
+- [x] Simple color customization (background, foreground, selection, caret)
 - [ ] Per-language syntax colors
-- [ ] Import/export themes
+- [x] Import/export themes
 
 ### 8.2 Display Options
 - [x] Show/hide whitespace characters
-- [ ] Show/hide line endings
-- [ ] Show/hide indent guides
+- [x] Show/hide line endings
+- [x] Show/hide indent guides
 - [x] Zoom in/out (Ctrl+scroll wheel)
-- [ ] Font family and size selection
-- [ ] Line spacing adjustment
+- [x] Font family and size selection
+- [x] Line spacing adjustment
 
 ---
 
