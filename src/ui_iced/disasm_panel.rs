@@ -216,7 +216,12 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                             .color(accent)
                             .font(Font::MONOSPACE),
                     );
-                    rows = rows.push(container(sym_row).padding([2, 10]));
+                    rows = rows.push(
+                        container(sym_row)
+                            .padding([2, 10])
+                            .height(18)
+                            .clip(true),
+                    );
                 }
 
                 let mut insn_row = row![].align_y(iced::Alignment::Center);
@@ -385,7 +390,12 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                     );
                 }
 
-                rows = rows.push(container(insn_row).padding([0, 10]));
+                rows = rows.push(
+                    container(insn_row)
+                        .padding([0, 10])
+                        .height(18)
+                        .clip(true),
+                );
             }
         }
     } else {
