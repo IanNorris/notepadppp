@@ -23,6 +23,7 @@ impl std::fmt::Display for DisasmArch {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
     pub address: u64,
@@ -184,6 +185,7 @@ pub fn render_arrow_column(line_idx: usize, arrows: &[BranchArrow], num_lanes: u
     result
 }
 
+#[derive(Debug, Clone)]
 pub struct Disassembler {
     bytes: Vec<u8>,
     base_address: u64,
@@ -698,6 +700,8 @@ impl Disassembler {
         let address_map = pdb.address_map()
             .map_err(|e| format!("Failed to read PDB address map: {}", e))?;
 
+        let mut seen_addrs: std::collections::HashSet<u64> = symbols.iter().map(|s| s.address).collect();
+
         let mut iter = symbol_table.iter();
         while let Some(symbol) = iter.next().map_err(|e| format!("PDB symbol iter error: {}", e))? {
             if let Ok(pdb::SymbolData::Public(pub_sym)) = symbol.parse() {
@@ -705,7 +709,7 @@ impl Disassembler {
                     let name = pub_sym.name.to_string().to_string();
                     if !name.is_empty() {
                         let addr = image_base + rva.0 as u64;
-                        if !symbols.iter().any(|s| s.address == addr && s.name == name) {
+                        if seen_addrs.insert(addr) {
                             symbols.push(Symbol {
                                 name,
                                 address: addr,
@@ -718,9 +722,11 @@ impl Disassembler {
         }
 
         // Also try to get procedure symbols (functions with size info)
+        let max_module_symbols = 500_000;
+        let mut module_sym_count = 0usize;
         if let Ok(dbi) = pdb.debug_information() {
             if let Ok(mut modules) = dbi.modules() {
-                while let Ok(Some(module)) = modules.next() {
+                'modules: while let Ok(Some(module)) = modules.next() {
                     if let Ok(Some(module_info)) = pdb.module_info(&module) {
                         if let Ok(symbols_iter) = module_info.symbols() {
                             let mut sym_iter = symbols_iter;
@@ -730,12 +736,16 @@ impl Disassembler {
                                         let name = proc.name.to_string().to_string();
                                         if !name.is_empty() {
                                             let addr = image_base + rva.0 as u64;
-                                            if !symbols.iter().any(|s| s.address == addr) {
+                                            if seen_addrs.insert(addr) {
                                                 symbols.push(Symbol {
                                                     name,
                                                     address: addr,
                                                     size: proc.len as u64,
                                                 });
+                                                module_sym_count += 1;
+                                                if module_sym_count >= max_module_symbols {
+                                                    break 'modules;
+                                                }
                                             }
                                         }
                                     }

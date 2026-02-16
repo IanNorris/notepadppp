@@ -149,7 +149,16 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
     // Disassembly rows
     let mut rows = column![].spacing(0).width(Length::Fill);
 
-    if let Some(ref disasm) = state.disasm_state {
+    if state.disasm_loading && state.disasm_state.is_none() {
+        rows = rows.push(
+            container(
+                text("Loading disassembly…")
+                    .size(14)
+                    .color(text_dim),
+            )
+            .padding([20, 10]),
+        );
+    } else if let Some(ref disasm) = state.disasm_state {
         let lines = disasm.disassemble_range(state.disasm_offset, VISIBLE_LINES);
 
         if lines.is_empty() {

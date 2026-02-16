@@ -216,6 +216,7 @@ pub enum Message {
     DisasmEditHexCommit(usize),
     DisasmCopySelection,
     DisasmCopyText(String),
+    DisasmLoaded(Result<crate::tools::disasm::Disassembler, String>),
     HashSha256,
     HashSha1,
     HashMd5,
@@ -528,6 +529,7 @@ pub struct NotepadIced {
     // Disassembler
     pub show_disasm: bool,
     pub disasm_state: Option<crate::tools::disasm::Disassembler>,
+    pub disasm_loading: bool,
     pub disasm_offset: usize,
     pub disasm_arch: crate::tools::disasm::DisasmArch,
     pub disasm_goto_addr: String,
@@ -544,6 +546,8 @@ pub struct NotepadIced {
     pub disasm_edit_mode: bool,
     pub disasm_edit_offset: Option<usize>,
     pub disasm_edit_hex: String,
+    /// Path to binary file pending async disassembler load
+    pub pending_disasm_path: Option<std::path::PathBuf>,
 }
 
 impl Default for NotepadIced {
@@ -646,6 +650,7 @@ impl Default for NotepadIced {
             status_message: None,
             show_disasm: false,
             disasm_state: None,
+            disasm_loading: false,
             disasm_offset: 0,
             disasm_arch: crate::tools::disasm::DisasmArch::X86_64,
             disasm_goto_addr: String::new(),
@@ -662,11 +667,12 @@ impl Default for NotepadIced {
             disasm_edit_mode: false,
             disasm_edit_offset: None,
             disasm_edit_hex: String::new(),
+            pending_disasm_path: None,
         };
 
         // Apply CLI arguments if provided
         if let Some(cli) = CLI_ARGS.get() {
-            open_cli_files(&mut state, cli);
+            state.pending_disasm_path = open_cli_files(&mut state, cli);
         }
 
         state
@@ -674,8 +680,10 @@ impl Default for NotepadIced {
 }
 
 /// Open files from CLI arguments, applying encoding/language/read_only/goto overrides.
-fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
+/// Returns the path of a binary file needing async disassembler load, if any.
+fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) -> Option<std::path::PathBuf> {
     let mut opened_any = false;
+    let mut disasm_path = None;
     for path in &cli.files {
         let path = if path.is_absolute() {
             path.clone()
@@ -711,18 +719,16 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
                 } else {
                     state.tab_contents.push(TabContent::with_text(&buf_text));
                 }
-                // Auto-show disassembler for binary files
+                // Auto-show disassembler for binary files (loaded asynchronously)
                 if is_binary {
                     if let Some(ref p) = state.tab_manager.active_document().path {
-                        if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
-                            state.disasm_state = Some(disasm);
-                            state.disasm_offset = 0;
-                            state.show_disasm = true;
-                            // Also save to tab content
-                            let idx = state.tab_manager.active_index();
-                            if let Some(tc) = state.tab_contents.get_mut(idx) {
-                                tc.show_disasm = true;
-                            }
+                        disasm_path = Some(p.clone());
+                        state.disasm_loading = true;
+                        state.disasm_offset = 0;
+                        state.show_disasm = true;
+                        let idx = state.tab_manager.active_index();
+                        if let Some(tc) = state.tab_contents.get_mut(idx) {
+                            tc.show_disasm = true;
                         }
                     }
                 }
@@ -742,11 +748,14 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
             state.tab_manager.active_document_mut().cursor.position.col = col.saturating_sub(1);
         }
     }
+    disasm_path
 }
 
 /// Open files from a single-instance message.
-fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_instance::InstanceMessage) {
+/// Returns the path of a binary file needing async disassembler load, if any.
+fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_instance::InstanceMessage) -> Option<std::path::PathBuf> {
     let mut opened_any = false;
+    let mut disasm_path = None;
     for path in &msg.files {
         let path = if path.is_absolute() {
             path.clone()
@@ -780,17 +789,16 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
                 } else {
                     state.tab_contents.push(TabContent::with_text(&buf_text));
                 }
-                // Auto-activate disassembler for binary files
+                // Auto-activate disassembler for binary files (loaded asynchronously)
                 if is_binary {
                     if let Some(ref p) = state.tab_manager.active_document().path {
-                        if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
-                            state.disasm_state = Some(disasm);
-                            state.disasm_offset = 0;
-                            state.show_disasm = true;
-                            let idx = state.tab_manager.active_index();
-                            if let Some(tc) = state.tab_contents.get_mut(idx) {
-                                tc.show_disasm = true;
-                            }
+                        disasm_path = Some(p.clone());
+                        state.disasm_loading = true;
+                        state.disasm_offset = 0;
+                        state.show_disasm = true;
+                        let idx = state.tab_manager.active_index();
+                        if let Some(tc) = state.tab_contents.get_mut(idx) {
+                            tc.show_disasm = true;
                         }
                     }
                 }
@@ -809,6 +817,7 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
             state.tab_manager.active_document_mut().cursor.position.col = col.saturating_sub(1);
         }
     }
+    disasm_path
 }
 
 pub fn title(state: &NotepadIced) -> String {
@@ -940,6 +949,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             },
         ),
         Message::FilesOpened(results) => {
+            let mut disasm_task = Task::none();
             for result in results {
                 if let Ok((content, path)) = result {
                     let ext_lower = path.extension().and_then(|e| e.to_str())
@@ -964,14 +974,19 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                             }
                             if is_binary {
                                 if let Some(ref p) = state.tab_manager.active_document().path {
-                                    if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
-                                        state.disasm_state = Some(disasm);
-                                        state.disasm_offset = 0;
-                                        state.show_disasm = true;
-                                        if let Some(tc) = state.tab_contents.get_mut(idx) {
-                                            tc.show_disasm = true;
-                                        }
+                                    let path = p.clone();
+                                    state.disasm_loading = true;
+                                    state.disasm_offset = 0;
+                                    state.show_disasm = true;
+                                    if let Some(tc) = state.tab_contents.get_mut(idx) {
+                                        tc.show_disasm = true;
                                     }
+                                    disasm_task = Task::perform(
+                                        async move {
+                                            crate::tools::disasm::Disassembler::from_file(&path).map_err(|e| e.to_string())
+                                        },
+                                        Message::DisasmLoaded,
+                                    );
                                 }
                             }
                         }
@@ -981,7 +996,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     }
                 }
             }
-            Task::none()
+            disasm_task
         }
         Message::FileOpened(result) => {
             // Delegate single file open to FilesOpened
@@ -1604,20 +1619,35 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
 
         // ── Single Instance ──
         Message::CheckInstance(_) => {
+            // Check for pending disasm load from init
+            let mut task = Task::none();
+            if let Some(path) = state.pending_disasm_path.take() {
+                task = Task::perform(
+                    async move {
+                        crate::tools::disasm::Disassembler::from_file(&path).map_err(|e| e.to_string())
+                    },
+                    Message::DisasmLoaded,
+                );
+            }
             if let Some(mutex) = INSTANCE_LISTENER.get() {
                 if let Ok(guard) = mutex.lock() {
                     if let Some(ref listener) = *guard {
                         if let Some(msg) = listener.try_recv() {
                             drop(guard);
-                            open_instance_files(state, &msg);
+                            if let Some(path) = open_instance_files(state, &msg) {
+                                task = Task::perform(
+                                    async move {
+                                        crate::tools::disasm::Disassembler::from_file(&path).map_err(|e| e.to_string())
+                                    },
+                                    Message::DisasmLoaded,
+                                );
+                            }
                         }
                     }
                 }
             }
-            Task::none()
+            task
         }
-
-        // ── View ──
         Message::ToggleWordWrap => {
             state.word_wrap = !state.word_wrap;
             Task::none()
@@ -1922,6 +1952,25 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::ToggleHexViewer => {
             state.show_hex_viewer = !state.show_hex_viewer;
+            Task::none()
+        }
+        Message::DisasmLoaded(result) => {
+            state.disasm_loading = false;
+            match result {
+                Ok(disasm) => {
+                    state.disasm_state = Some(disasm);
+                    state.disasm_offset = 0;
+                    state.show_disasm = true;
+                    let idx = state.tab_manager.active_index();
+                    if let Some(tc) = state.tab_contents.get_mut(idx) {
+                        tc.show_disasm = true;
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to load disassembler: {}", e);
+                    state.show_disasm = false;
+                }
+            }
             Task::none()
         }
         Message::ToggleDisasm => {
@@ -4435,8 +4484,8 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
 
     let mut subs = vec![keys, file_drops];
 
-    // Poll for incoming single-instance messages
-    if INSTANCE_LISTENER.get().is_some() {
+    // Poll for incoming single-instance messages and pending disasm loads
+    if INSTANCE_LISTENER.get().is_some() || _state.pending_disasm_path.is_some() {
         subs.push(
             iced::time::every(std::time::Duration::from_millis(500))
                 .map(Message::CheckInstance),

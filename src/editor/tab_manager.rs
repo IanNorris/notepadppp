@@ -62,16 +62,14 @@ impl TabManager {
             let is_binary = file_io::is_binary_content(&raw_header);
 
             if is_binary {
-                // Binary large file: use lossy conversion
-                let raw_bytes = std::fs::read(&path)?;
-                let content = String::from_utf8_lossy(&raw_bytes).into_owned();
-                let encoding = file_io::detect_encoding(&raw_bytes);
-                let mut doc = Document::from_str(&content)
-                    .with_path(path)
-                    .with_encoding(encoding)
-                    .with_large_file_info(large_info);
+                // Binary large file: don't load content into rope — just store path + metadata
+                let encoding = file_io::detect_encoding(&raw_header);
+                let mut doc = Document::new();
+                doc.path = Some(path);
+                doc.encoding = encoding;
                 doc.is_binary = true;
                 doc.read_only = true;
+                doc = doc.with_large_file_info(large_info);
                 doc
             } else {
                 // Text large file: use streaming load via Rope::from_reader
