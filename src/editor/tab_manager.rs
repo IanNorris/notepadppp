@@ -247,6 +247,13 @@ impl TabManager {
         self.tabs.len()
     }
 
+    /// Set the display title for an untitled tab.
+    pub fn set_tab_title(&mut self, index: usize, title: &str) {
+        if index < self.untitled_names.len() {
+            self.untitled_names[index] = Some(title.to_string());
+        }
+    }
+
     /// Get the display title for a tab.
     pub fn get_tab_title(&self, index: usize) -> String {
         if index >= self.tabs.len() {

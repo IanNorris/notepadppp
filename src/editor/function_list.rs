@@ -132,12 +132,40 @@ fn extract_c_family_symbol(line: &str) -> Option<String> {
         extract_name_after(line, "enum ")
     } else if line.starts_with("interface ") || line.starts_with("public interface ") {
         extract_name_after(line, "interface ")
-    } else if line.contains('(') && !line.starts_with("//") && !line.starts_with('#') && !line.starts_with("if ") && !line.starts_with("for ") && !line.starts_with("while ") {
+    } else if line.contains('(') && !line.starts_with("//") && !line.starts_with('#')
+        && !line.starts_with("if ") && !line.starts_with("for ") && !line.starts_with("while ")
+        && !line.starts_with("switch ") && !line.starts_with("catch ")
+        && !line.starts_with("return ") && !line.starts_with("throw ")
+        // Exclude C++ initializer list entries (lines starting with comma or colon)
+        && !line.starts_with(',') && !line.starts_with(':')
+        // Exclude lines that are just member(value) calls with no return type
+        && !line.starts_with('.')
+        // Exclude preprocessor and single-word function calls (e.g. "printf(...)")
+    {
         let before_paren = line.split('(').next()?;
         let words: Vec<&str> = before_paren.split_whitespace().collect();
         if words.len() >= 2 {
             let name = words.last()?;
-            if name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            // Exclude if the first word looks like a member init (starts with comma/colon after trim)
+            if name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ':' || c == '~') {
+                // Skip names that are just scope resolution or destructors without a return type
+                let clean_name = name.trim_start_matches('~');
+                let clean_name = if let Some(pos) = clean_name.rfind("::") {
+                    &clean_name[pos + 2..]
+                } else {
+                    clean_name
+                };
+                if clean_name.is_empty() {
+                    return None;
+                }
+                // Exclude if the "return type" (first word) is a control flow keyword
+                let first = words[0];
+                if first == "else" || first == "do" || first == "case"
+                    || first == "delete" || first == "new" || first == "sizeof"
+                    || first == "typeof" || first == "alignof"
+                {
+                    return None;
+                }
                 return Some(name.to_string());
             }
         }

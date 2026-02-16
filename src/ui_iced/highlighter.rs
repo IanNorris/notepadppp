@@ -122,3 +122,18 @@ pub fn extension_for_language(lang: &str) -> Option<String> {
     }
     None
 }
+
+/// Detect the syntect language name for a file extension.
+///
+/// This wraps `find_syntax_by_extension` but fixes ambiguous extensions like
+/// `.h` which syntect maps to Objective-C instead of C/C++.
+pub fn language_for_extension(ext: &str) -> String {
+    // Header files: prefer C++ over Objective-C
+    if ext == "h" || ext == "H" {
+        return "C++".to_string();
+    }
+    SYNTAX_SET
+        .find_syntax_by_extension(ext)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "Plain Text".to_string())
+}

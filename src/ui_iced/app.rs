@@ -360,6 +360,9 @@ pub enum Message {
     MarkAll,
     ClearAllMarks,
 
+    // Find All (search current document, show in results panel)
+    FindAll,
+
     // Bookmark from search
     BookmarkMatchingLines,
 
@@ -691,6 +694,8 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
                 }
                 if let Some(ref lang) = cli.language {
                     doc.language = lang.clone();
+                } else if !state.file_extension.is_empty() {
+                    doc.language = super::highlighter::language_for_extension(&state.file_extension);
                 }
                 if cli.read_only {
                     doc.read_only = true;
@@ -760,6 +765,8 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
                 }
                 if let Some(ref lang) = msg.language {
                     doc.language = lang.clone();
+                } else if !state.file_extension.is_empty() {
+                    doc.language = super::highlighter::language_for_extension(&state.file_extension);
                 }
                 if msg.read_only {
                     doc.read_only = true;
@@ -821,6 +828,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             | Message::ToggleCaseSensitive | Message::ToggleWholeWord | Message::ToggleRegex
             | Message::FindNext | Message::FindPrev | Message::ReplaceNext | Message::ReplaceAll
             | Message::CloseSearch | Message::ClickSearchResult(_)
+            | Message::FindAll
             | Message::GotoLineInputChanged(_) | Message::GotoLineConfirm | Message::GotoLineClose
             | Message::CloseAbout
             | Message::SavePreferences | Message::CancelPreferences
@@ -926,11 +934,17 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::FileOpened(result) => {
             if let Ok((content, path)) = result {
                 // Extract file extension for syntax highlighting
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    state.file_extension = ext.to_lowercase();
+                let ext_lower = path.extension().and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase()).unwrap_or_default();
+                if !ext_lower.is_empty() {
+                    state.file_extension = ext_lower.clone();
                 }
                 match state.tab_manager.open_file(path) {
                     Ok(idx) => {
+                        if !ext_lower.is_empty() {
+                            let lang = super::highlighter::language_for_extension(&ext_lower);
+                            state.tab_manager.get_document_mut(idx).unwrap().language = lang;
+                        }
                         let doc = state.tab_manager.get_document(idx).unwrap();
                         let is_binary = doc.is_binary;
                         let buf_text = doc.buffer.text();
@@ -983,6 +997,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::FileSaved(result) => {
             if let Ok(path) = result {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    let ext_lower = ext.to_lowercase();
+                    state.file_extension = ext_lower.clone();
+                    let lang = super::highlighter::language_for_extension(&ext_lower);
+                    state.tab_manager.active_document_mut().language = lang;
+                }
                 let idx = state.tab_manager.active_index();
                 if let Err(e) = state.tab_manager.save_tab_as(idx, path) {
                     log::error!("Save As failed: {}", e);
@@ -1499,6 +1519,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     .map(|m| super::search_results_panel::SearchResultMatch {
                         line: m.line,
                         line_text: m.line_text.clone(),
+                        file_path: None,
                     })
                     .collect();
                 state.search_results_panel.add_search(state.search_query.clone(), results);
@@ -1507,6 +1528,22 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::ClearAllMarks => {
             state.mark_manager.clear();
+            Task::none()
+        }
+
+        // ── Find All ──
+        Message::FindAll => {
+            if !state.search_matches.is_empty() {
+                let results: Vec<super::search_results_panel::SearchResultMatch> = state.search_matches.iter()
+                    .map(|m| super::search_results_panel::SearchResultMatch {
+                        line: m.line,
+                        line_text: m.line_text.clone(),
+                        file_path: None,
+                    })
+                    .collect();
+                state.search_results_panel.add_search(state.search_query.clone(), results);
+                state.show_search_results_panel = true;
+            }
             Task::none()
         }
 
@@ -1535,6 +1572,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::ClickSearchResultEntry(entry_idx, match_idx) => {
             if let Some(entry) = state.search_results_panel.entries.get(entry_idx) {
                 if let Some(m) = entry.matches.get(match_idx) {
+                    if let Some(ref file_path) = m.file_path {
+                        // FiF result: open/switch to the file via FifClickResult logic
+                        let path = file_path.clone();
+                        let line = m.line;
+                        return update(state, Message::FifClickResult(path, line));
+                    }
                     state.tab_manager.active_document_mut().cursor.position.line = m.line;
                     state.tab_manager.active_document_mut().cursor.position.col = 0;
                 }
@@ -1663,24 +1706,46 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::ToggleFold => {
             if let Some(tc) = state.tab_contents.get(state.tab_manager.active_index()) {
                 let line = tc.content.cursor_position().0;
-                state.fold_manager.toggle_fold(line);
+                if state.fold_manager.is_fold_point(line) {
+                    let was_folded = state.fold_manager.is_folded(line);
+                    state.fold_manager.toggle_fold(line);
+                    if !was_folded {
+                        let hidden = state.fold_manager.hidden_line_count(line);
+                        state.status_message = Some((format!("Folded {} lines (iced editor cannot hide lines — fold markers shown in gutter)", hidden), std::time::Instant::now()));
+                    } else {
+                        state.status_message = Some(("Region unfolded".to_string(), std::time::Instant::now()));
+                    }
+                } else {
+                    state.status_message = Some(("No foldable region at cursor".to_string(), std::time::Instant::now()));
+                }
             }
             Task::none()
         }
         Message::ToggleFoldAt(line) => {
+            let was_folded = state.fold_manager.is_folded(line);
             state.fold_manager.toggle_fold(line);
+            if !was_folded {
+                let hidden = state.fold_manager.hidden_line_count(line);
+                state.status_message = Some((format!("▶ Folded {} lines (lines {}-{})", hidden, line + 1, line + 1 + hidden), std::time::Instant::now()));
+            } else {
+                state.status_message = Some(("▼ Region unfolded".to_string(), std::time::Instant::now()));
+            }
             Task::none()
         }
         Message::FoldAll => {
             state.fold_manager.fold_all();
+            let count = state.fold_manager.regions().len();
+            state.status_message = Some((format!("Folded all {} regions", count), std::time::Instant::now()));
             Task::none()
         }
         Message::UnfoldAll => {
             state.fold_manager.unfold_all();
+            state.status_message = Some(("All regions unfolded".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::FoldLevel(level) => {
             state.fold_manager.fold_level(level);
+            state.status_message = Some((format!("Folded to level {}", level), std::time::Instant::now()));
             Task::none()
         }
 
@@ -2558,13 +2623,35 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CompareFileLoaded(result) => {
-            if let Ok(other_text) = result {
-                let current_text = get_buffer_text(state);
-                let diff_result = crate::tools::diff_tool::diff_texts(&current_text, &other_text);
-                let diff_text = crate::editor::text_transforms::format_diff_output(&diff_result);
-                state.tab_manager.new_tab();
-                state.tab_contents.push(TabContent::with_text(&diff_text));
-                state.tab_manager.active_document_mut().language = "Diff".to_string();
+            match result {
+                Ok(other_text) => {
+                    let current_text = get_buffer_text(state);
+                    let diff_result = crate::tools::diff_tool::diff_texts(&current_text, &other_text);
+                    let stats = &diff_result.stats;
+                    let header = format!(
+                        "=== Diff: {} added, {} removed, {} changed, {} unchanged ===\n\n",
+                        stats.added, stats.removed, stats.changed, stats.same
+                    );
+                    let diff_body = crate::editor::text_transforms::format_diff_output(&diff_result);
+                    let diff_text = format!("{}{}", header, diff_body);
+                    let idx = state.tab_manager.new_tab();
+                    state.tab_manager.set_tab_title(idx, "Diff Result");
+                    let doc = state.tab_manager.active_document_mut();
+                    let len = doc.buffer.len_bytes();
+                    if len > 0 { doc.buffer.delete(0, len); }
+                    doc.buffer.insert(0, &diff_text);
+                    doc.language = "Diff".to_string();
+                    state.tab_contents.push(TabContent::with_text(&diff_text));
+                    state.status_message = Some((
+                        format!("Diff complete: +{} -{} ~{}", stats.added, stats.removed, stats.changed),
+                        std::time::Instant::now(),
+                    ));
+                }
+                Err(e) => {
+                    if e != "Cancelled" {
+                        state.status_message = Some((format!("Compare failed: {e}"), std::time::Instant::now()));
+                    }
+                }
             }
             Task::none()
         }
@@ -2619,37 +2706,80 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::FifSearchComplete(result) => {
             state.fif_searching = false;
             match result {
-                Ok(results) => state.fif_results = results,
+                Ok(results) => {
+                    // Add FiF results to the Search Results panel
+                    let mut all_matches = Vec::new();
+                    for file_result in &results {
+                        for m in &file_result.matches {
+                            all_matches.push(super::search_results_panel::SearchResultMatch {
+                                line: m.line,
+                                line_text: format!("{}: {}", file_result.path.display(), m.line_text),
+                                file_path: Some(file_result.path.clone()),
+                            });
+                        }
+                    }
+                    if !all_matches.is_empty() {
+                        state.search_results_panel.add_search(
+                            format!("Find in Files: {}", state.fif_query),
+                            all_matches,
+                        );
+                        state.show_search_results_panel = true;
+                    }
+                    state.fif_results = results;
+                }
                 Err(e) => log::error!("Find in Files error: {}", e),
             }
             Task::none()
         }
         Message::FifClickResult(path, line) => {
-            // Open the file in a new tab and go to the line
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        state.file_extension = ext.to_lowercase();
+            // Check if the file is already open in a tab
+            let mut existing_idx = None;
+            for i in 0..state.tab_manager.tab_count() {
+                if let Some(doc) = state.tab_manager.get_document(i) {
+                    if doc.path.as_ref() == Some(&path) {
+                        existing_idx = Some(i);
+                        break;
                     }
-                    match state.tab_manager.open_file(path) {
-                        Ok(idx) => {
-                            let doc = state.tab_manager.get_document(idx).unwrap();
-                            let buf_text = doc.buffer.text();
-                            state.fold_manager.detect_regions(&buf_text);
-                            state.tab_contents.push(TabContent::with_text(&buf_text));
-                        }
-                        Err(_) => {
-                            state.tab_manager.new_tab();
-                            state.fold_manager.detect_regions(&content);
-                            state.tab_contents.push(TabContent::with_text(&content));
-                        }
-                    }
-                    // Go to the matched line
-                    state.tab_manager.active_document_mut().cursor.position.line = line;
-                    state.tab_manager.active_document_mut().cursor.position.col = 0;
                 }
-                Err(e) => log::error!("Failed to open file: {}", e),
             }
+
+            if let Some(idx) = existing_idx {
+                // Switch to the existing tab
+                state.tab_manager.set_active(idx);
+            } else {
+                // Open the file in a new tab
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            state.file_extension = ext.to_lowercase();
+                        }
+                        match state.tab_manager.open_file(path) {
+                            Ok(idx) => {
+                                if !state.file_extension.is_empty() {
+                                    let lang = super::highlighter::language_for_extension(&state.file_extension);
+                                    state.tab_manager.get_document_mut(idx).unwrap().language = lang;
+                                }
+                                let doc = state.tab_manager.get_document(idx).unwrap();
+                                let buf_text = doc.buffer.text();
+                                state.fold_manager.detect_regions(&buf_text);
+                                state.tab_contents.push(TabContent::with_text(&buf_text));
+                            }
+                            Err(_) => {
+                                state.tab_manager.new_tab();
+                                state.fold_manager.detect_regions(&content);
+                                state.tab_contents.push(TabContent::with_text(&content));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to open file: {}", e);
+                        return Task::none();
+                    }
+                }
+            }
+            // Go to the matched line
+            state.tab_manager.active_document_mut().cursor.position.line = line;
+            state.tab_manager.active_document_mut().cursor.position.col = 0;
             Task::none()
         }
         Message::CloseFindInFiles => {
@@ -2694,11 +2824,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         // ── Drag floating panels ──
         Message::DragFindStart => {
             state.dragging_find_panel = true;
-            // Calculate offset from mouse to panel position
-            let pos = state.find_panel_pos.unwrap_or((0.0, 60.0));
+            // last_mouse_pos is local to the title bar mouse_area, so it's
+            // already the offset from the panel's top-left corner.
             state.drag_offset = (
-                state.last_mouse_pos.x - pos.0,
-                state.last_mouse_pos.y - pos.1,
+                state.last_mouse_pos.x,
+                state.last_mouse_pos.y,
             );
             Task::none()
         }
@@ -2717,10 +2847,9 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::DragFifStart => {
             state.dragging_fif_panel = true;
-            let pos = state.fif_panel_pos.unwrap_or((0.0, 60.0));
             state.fif_drag_offset = (
-                state.last_mouse_pos.x - pos.0,
-                state.last_mouse_pos.y - pos.1,
+                state.last_mouse_pos.x,
+                state.last_mouse_pos.y,
             );
             Task::none()
         }
@@ -2829,10 +2958,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::FileDropped(path) => {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                let lang = if ext.is_empty() { "Plain Text".to_string() } else { super::highlighter::language_for_extension(&ext) };
                 if state.active_pane == 1 && state.split_mode != SplitMode::None {
                     state.split_file_extension = ext;
                     match state.split_tab_manager.open_file(path) {
                         Ok(idx) => {
+                            state.split_tab_manager.get_document_mut(idx).unwrap().language = lang;
                             let doc = state.split_tab_manager.get_document(idx).unwrap();
                             let buf_text = doc.buffer.text();
                             state.split_tab_contents.push(TabContent::with_text(&buf_text));
@@ -2846,6 +2977,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     state.file_extension = ext;
                     match state.tab_manager.open_file(path) {
                         Ok(idx) => {
+                            state.tab_manager.get_document_mut(idx).unwrap().language = lang;
                             let doc = state.tab_manager.get_document(idx).unwrap();
                             let buf_text = doc.buffer.text();
                             state.fold_manager.detect_regions(&buf_text);
@@ -3097,7 +3229,17 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     if let Some(dir) = path.parent() {
                         let dir = dir.to_path_buf();
                         #[cfg(target_os = "linux")]
-                        { let _ = std::process::Command::new("xterm").current_dir(&dir).spawn(); }
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let _ = std::process::Command::new("setsid")
+                                .arg("x-terminal-emulator")
+                                .current_dir(&dir)
+                                .stdin(std::process::Stdio::null())
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .process_group(0)
+                                .spawn();
+                        }
                         #[cfg(target_os = "windows")]
                         { let _ = std::process::Command::new("cmd.exe").current_dir(&dir).spawn(); }
                         #[cfg(target_os = "macos")]
@@ -3401,13 +3543,15 @@ pub fn view(state: &NotepadIced) -> Element<'_, Message> {
             primary_pane
         };
 
-        if state.show_function_list {
-            row![
-                container(editor_area).width(Length::Fill),
-                super::function_list_panel::view_function_list(state, &state.theme),
-            ]
-            .height(Length::Fill)
-            .into()
+        if state.show_function_list || state.show_minimap {
+            let mut main_row = row![container(editor_area).width(Length::Fill)].height(Length::Fill);
+            if state.show_minimap {
+                main_row = main_row.push(super::minimap_panel::view_minimap(state, &state.theme));
+            }
+            if state.show_function_list {
+                main_row = main_row.push(super::function_list_panel::view_function_list(state, &state.theme));
+            }
+            main_row.into()
         } else {
             editor_area
         }
@@ -4622,16 +4766,28 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
             for i in 1..=line_count {
                 let line_idx = i - 1; // 0-based
                 let fold_indicator = if state.fold_manager.is_folded(line_idx) {
-                    "[+] "
+                    let hidden = state.fold_manager.hidden_line_count(line_idx);
+                    format!("▶ {}  +{}", i, hidden)
                 } else if state.fold_manager.is_fold_point(line_idx) {
-                    "[-] "
+                    format!("▼ {}", i)
+                } else if state.fold_manager.is_hidden(line_idx) {
+                    // Dim hidden lines in gutter
+                    format!("│ {}", i)
                 } else {
-                    "    "
+                    format!("  {}", i)
                 };
 
-                let line_label = text(format!("{}{}", fold_indicator, i))
+                let line_color = if state.fold_manager.is_folded(line_idx) {
+                    state.theme.accent
+                } else if state.fold_manager.is_hidden(line_idx) {
+                    iced::Color { a: 0.3, ..t_text_dim }
+                } else {
+                    t_text_dim
+                };
+
+                let line_label = text(fold_indicator)
                     .size(state.font_size)
-                    .color(t_text_dim);
+                    .color(line_color);
 
                 let line_widget: Element<'_, Message> = if state.fold_manager.is_fold_point(line_idx) {
                     mouse_area(
@@ -4653,8 +4809,9 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 gutter_col = gutter_col.push(line_widget);
             }
 
-            let gutter = container(scrollable(gutter_col))
+            let gutter = container(gutter_col)
                 .height(Length::Fill)
+                .clip(true)
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()
@@ -4680,8 +4837,9 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                     guide_col = guide_col.push(guide_text);
                 }
                 editor_row = editor_row.push(
-                    container(scrollable(guide_col))
+                    container(guide_col)
                         .height(Length::Fill)
+                        .clip(true)
                         .style(move |_theme: &Theme| container::Style {
                             background: Some(iced::Background::Color(t_bg)),
                             ..Default::default()
@@ -4707,14 +4865,51 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                     );
                 }
                 editor_row = editor_row.push(
-                    container(scrollable(eol_col))
+                    container(eol_col)
                         .height(Length::Fill)
+                        .clip(true)
                         .style(move |_theme: &Theme| container::Style {
                             background: Some(iced::Background::Color(t_bg)),
                             ..Default::default()
                         })
                 );
             }
+
+            container(editor_row)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(t_bg)),
+                    ..Default::default()
+                })
+                .into()
+        } else if state.show_line_endings {
+            // Line endings without line numbers
+            let content_text = tc.content.text();
+            let line_count = content_text.lines().count().max(1);
+            let t_eol_color = state.theme.text_dim;
+            let doc_le = state.tab_manager.active_document().line_ending;
+            let eol_marker = match doc_le {
+                crate::editor::document::LineEnding::CRLF => "⏎",
+                crate::editor::document::LineEnding::LF => "↵",
+                crate::editor::document::LineEnding::CR => "←",
+            };
+            let mut eol_col = column![];
+            for _ in 0..line_count {
+                eol_col = eol_col.push(
+                    text(eol_marker).size(state.font_size).color(t_eol_color)
+                );
+            }
+            let editor_row = row![
+                editor,
+                container(eol_col)
+                    .height(Length::Fill)
+                    .clip(true)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(t_bg)),
+                        ..Default::default()
+                    })
+            ].height(Length::Fill);
 
             container(editor_row)
                 .width(Length::Fill)
@@ -4941,8 +5136,9 @@ fn view_split_pane<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 gutter_col = gutter_col.push(line_widget);
             }
 
-            let gutter = container(scrollable(gutter_col))
+            let gutter = container(gutter_col)
                 .height(Length::Fill)
+                .clip(true)
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(t_bg)),
                     ..Default::default()

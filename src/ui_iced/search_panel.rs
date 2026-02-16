@@ -92,13 +92,15 @@ pub fn view_search_panel<'a>(state: &NotepadIced, theme: &AppTheme) -> Element<'
     ]
     .padding([0, 8]);
 
-    // Action buttons row (Mark All, Bookmark Lines)
+    // Action buttons row (Mark All, Find All, Bookmark Lines)
     let mark_btn = action_button("Mark All", Message::MarkAll, theme);
+    let find_all_btn = action_button("Find All", Message::FindAll, theme);
     let clear_marks_btn = action_button("Clear Marks", Message::ClearAllMarks, theme);
     let bookmark_btn = action_button("Bookmark Lines", Message::BookmarkMatchingLines, theme);
 
     let action_row = row![
         mark_btn,
+        find_all_btn,
         clear_marks_btn,
         bookmark_btn,
     ]

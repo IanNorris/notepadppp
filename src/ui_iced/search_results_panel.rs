@@ -17,6 +17,8 @@ pub struct SearchResultsEntry {
 pub struct SearchResultMatch {
     pub line: usize,
     pub line_text: String,
+    /// Optional file path for Find in Files results.
+    pub file_path: Option<std::path::PathBuf>,
 }
 
 /// Manager for accumulating search results across multiple searches.

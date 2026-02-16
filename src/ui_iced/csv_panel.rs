@@ -34,9 +34,18 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
 
     let csv_data = parse_csv(&content_text, ',', state.csv_has_headers);
 
-    if csv_data.headers.is_empty() {
+    // Guard: data with no columns or only 1 column and many rows likely isn't CSV
+    let looks_like_csv = csv_data.headers.len() >= 2
+        || (csv_data.headers.len() == 1 && csv_data.rows.len() <= 1);
+
+    if csv_data.headers.is_empty() || !looks_like_csv {
+        let msg = if csv_data.headers.len() == 1 && csv_data.rows.len() > 1 {
+            "This data doesn't appear to be CSV (only 1 column detected). Try a different delimiter or check the file format."
+        } else {
+            "No CSV data to display"
+        };
         return container(
-            text("No CSV data to display").size(14).color(t_text_dim),
+            text(msg).size(14).color(t_text_dim),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -165,10 +174,12 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
     let header_row = container(row(header_cells))
         .width(Length::Fill);
 
-    // Data rows
+    // Data rows (cap at 10,000 to prevent UI lag)
+    let max_display_rows = 10_000;
     let mut data_rows = column![].spacing(0);
+    let display_count = csv_data.rows.len().min(max_display_rows);
 
-    for (row_idx, data_row) in csv_data.rows.iter().enumerate() {
+    for (row_idx, data_row) in csv_data.rows.iter().take(max_display_rows).enumerate() {
         let bg = if row_idx % 2 == 0 { t_background } else { t_tab_bar_bg };
 
         let mut cells: Vec<Element<'a, Message>> = Vec::new();
@@ -220,6 +231,21 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
         }
 
         data_rows = data_rows.push(row(cells));
+    }
+
+    if csv_data.rows.len() > max_display_rows {
+        data_rows = data_rows.push(
+            container(
+                text(format!(
+                    "Showing {} of {} rows",
+                    display_count,
+                    csv_data.rows.len()
+                ))
+                .size(12)
+                .color(t_text_dim),
+            )
+            .padding([6, 10]),
+        );
     }
 
     let table = column![header_row, scrollable(data_rows).height(Length::Fill)];

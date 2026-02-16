@@ -134,8 +134,8 @@ fn test_search_results_manager_default_empty() {
 fn test_add_search_results() {
     let mut srm = SearchResultsManager::default();
     srm.add_search("hello".to_string(), vec![
-        SearchResultMatch { line: 0, line_text: "hello world".to_string() },
-        SearchResultMatch { line: 5, line_text: "say hello".to_string() },
+        SearchResultMatch { line: 0, line_text: "hello world".to_string(), file_path: None },
+        SearchResultMatch { line: 5, line_text: "say hello".to_string(), file_path: None },
     ]);
     assert_eq!(srm.entry_count(), 1);
     assert_eq!(srm.total_matches(), 2);
@@ -145,11 +145,11 @@ fn test_add_search_results() {
 fn test_multiple_searches_accumulate() {
     let mut srm = SearchResultsManager::default();
     srm.add_search("first".to_string(), vec![
-        SearchResultMatch { line: 0, line_text: "first line".to_string() },
+        SearchResultMatch { line: 0, line_text: "first line".to_string(), file_path: None },
     ]);
     srm.add_search("second".to_string(), vec![
-        SearchResultMatch { line: 1, line_text: "second line".to_string() },
-        SearchResultMatch { line: 3, line_text: "also second".to_string() },
+        SearchResultMatch { line: 1, line_text: "second line".to_string(), file_path: None },
+        SearchResultMatch { line: 3, line_text: "also second".to_string(), file_path: None },
     ]);
     assert_eq!(srm.entry_count(), 2);
     assert_eq!(srm.total_matches(), 3);
@@ -159,7 +159,7 @@ fn test_multiple_searches_accumulate() {
 fn test_clear_search_results() {
     let mut srm = SearchResultsManager::default();
     srm.add_search("test".to_string(), vec![
-        SearchResultMatch { line: 0, line_text: "test".to_string() },
+        SearchResultMatch { line: 0, line_text: "test".to_string(), file_path: None },
     ]);
     srm.clear();
     assert!(srm.is_empty());
@@ -170,7 +170,7 @@ fn test_clear_search_results() {
 fn test_toggle_collapse() {
     let mut srm = SearchResultsManager::default();
     srm.add_search("query".to_string(), vec![
-        SearchResultMatch { line: 0, line_text: "line".to_string() },
+        SearchResultMatch { line: 0, line_text: "line".to_string(), file_path: None },
     ]);
     assert!(!srm.entries[0].collapsed);
     srm.toggle_collapse(0);
@@ -190,8 +190,8 @@ fn test_toggle_collapse_out_of_bounds() {
 fn test_search_results_entries_content() {
     let mut srm = SearchResultsManager::default();
     srm.add_search("pattern".to_string(), vec![
-        SearchResultMatch { line: 5, line_text: "found pattern here".to_string() },
-        SearchResultMatch { line: 10, line_text: "another pattern".to_string() },
+        SearchResultMatch { line: 5, line_text: "found pattern here".to_string(), file_path: None },
+        SearchResultMatch { line: 10, line_text: "another pattern".to_string(), file_path: None },
     ]);
     
     let entry = &srm.entries[0];
