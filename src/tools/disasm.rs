@@ -908,6 +908,76 @@ impl Disassembler {
         }
     }
 
+    /// Get the byte size of the instruction at the given offset.
+    /// Returns None if the offset is invalid or can't be decoded.
+    pub fn instruction_size_at(&self, offset: usize) -> Option<usize> {
+        if offset >= self.bytes.len() {
+            return None;
+        }
+        let cs = self.make_capstone().ok()?;
+        let slice = &self.bytes[offset..];
+        let addr = self.offset_to_address(offset);
+        let insns = cs.disasm_count(slice, addr, 1).ok()?;
+        insns.as_ref().first().map(|i| i.bytes().len())
+    }
+
+    /// Find the nearest valid instruction boundary at or before the given offset.
+    /// Searches backward from the offset checking nearby symbol addresses,
+    /// then scans forward from the best anchor to find the instruction boundary.
+    pub fn align_to_instruction(&self, offset: usize) -> usize {
+        if offset == 0 || offset >= self.bytes.len() {
+            return offset.min(self.bytes.len().saturating_sub(1));
+        }
+
+        // Try to find a symbol near this offset to use as an anchor
+        let addr = self.offset_to_address(offset);
+        if let Some(sym) = self.nearest_symbol_before(addr) {
+            if let Some(anchor_off) = self.address_to_offset(sym.address) {
+                // Scan forward from anchor to find instruction containing our offset
+                if anchor_off <= offset && (offset - anchor_off) < 0x10000 {
+                    let cs = match self.make_capstone() {
+                        Ok(cs) => cs,
+                        Err(_) => return offset,
+                    };
+                    let slice = &self.bytes[anchor_off..];
+                    let anchor_addr = self.offset_to_address(anchor_off);
+                    // Disassemble enough instructions to reach our offset
+                    let max_insns = (offset - anchor_off) / 1 + 2;
+                    if let Ok(insns) = cs.disasm_count(slice, anchor_addr, max_insns.min(500)) {
+                        let mut best = anchor_off;
+                        for insn in insns.as_ref() {
+                            let insn_off = (insn.address() - self.base_address) as usize;
+                            if insn_off <= offset {
+                                best = insn_off;
+                            } else {
+                                break;
+                            }
+                        }
+                        return best;
+                    }
+                }
+            }
+        }
+
+        // No symbol anchor found — try a small backward scan
+        // Check if current offset decodes validly
+        if self.instruction_size_at(offset).is_some() {
+            return offset;
+        }
+        // Try a few bytes back
+        for back in 1..=15 {
+            if offset >= back {
+                let try_off = offset - back;
+                if let Some(size) = self.instruction_size_at(try_off) {
+                    if try_off + size > offset {
+                        return try_off;
+                    }
+                }
+            }
+        }
+        offset
+    }
+
     fn make_capstone(&self) -> Result<Capstone, capstone::Error> {
         match self.arch {
             DisasmArch::X86_32 => Capstone::new()
@@ -974,12 +1044,17 @@ impl Disassembler {
         let operands_raw = insn.op_str().unwrap_or("").to_string();
         let mnemonic = insn.mnemonic().unwrap_or("").to_string();
 
-        // Parse branch target address for arrow rendering
+        // Parse branch target address for arrow rendering and navigation
         let branch_target = if mnemonic.starts_with('j')
             || mnemonic == "call"
             || (mnemonic.starts_with('b') && mnemonic != "bswap")
         {
+            // Try direct address first (e.g. "call 0x140001234")
             parse_hex_address(&operands_raw)
+                // Try RIP-relative (e.g. "call qword ptr [rip + 0x1234]")
+                .or_else(|| self.resolve_rip_relative(&operands_raw, addr, insn_size))
+                // Try absolute address in operands
+                .or_else(|| self.find_absolute_address_with_text(&operands_raw).map(|(a, _)| a))
         } else {
             None
         };

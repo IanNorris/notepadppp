@@ -7,7 +7,7 @@ use super::app::{Message, NotepadIced};
 use super::theme::AppTheme;
 use crate::tools::disasm::{compute_branch_arrows, render_arrow_column, DisasmArch};
 
-const VISIBLE_LINES: usize = 60;
+const VISIBLE_LINES: usize = 200;
 
 pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<'a, Message> {
     let panel_bg = theme.background;
@@ -117,7 +117,7 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
     }
     if state.disasm_show_bytes {
         header_row = header_row.push(
-            container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(180),
+            container(text("Bytes").size(11).color(text_dim).font(Font::MONOSPACE)).width(200),
         );
     }
     header_row = header_row.push(
@@ -184,7 +184,7 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                         sym_row = sym_row.push(container(Space::with_width(0)).width(160));
                     }
                     if state.disasm_show_bytes {
-                        sym_row = sym_row.push(container(Space::with_width(0)).width(180));
+                        sym_row = sym_row.push(container(Space::with_width(0)).width(200));
                     }
                     // Arrow column continuation for symbol rows
                     if state.disasm_show_arrows && num_lanes > 0 {
@@ -245,21 +245,26 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 }
 
                 if state.disasm_show_bytes {
-                    let bytes_str = line
-                        .bytes
+                    let display_bytes = if line.bytes.len() > 8 {
+                        &line.bytes[..8]
+                    } else {
+                        &line.bytes
+                    };
+                    let bytes_str = display_bytes
                         .iter()
                         .map(|b| format!("{:02X}", b))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    let bytes_padded = format!("{:<20}", bytes_str);
+                    let suffix = if line.bytes.len() > 8 { ".." } else { "" };
+                    let bytes_display = format!("{:<23}{}", bytes_str, suffix);
                     insn_row = insn_row.push(
                         container(
-                            text(bytes_padded)
+                            text(bytes_display)
                                 .size(12)
                                 .color(text_dim)
                                 .font(Font::MONOSPACE),
                         )
-                        .width(180),
+                        .width(200),
                     );
                 }
 
@@ -640,7 +645,7 @@ fn view_symbol_browser<'a>(
                         .size(11)
                         .color(text_dim),
                     Space::with_width(8),
-                    button(text("✕").size(12))
+                    button(text("X").size(12))
                         .on_press(Message::DisasmToggleSymBrowser)
                         .padding([2, 6]),
                 ]

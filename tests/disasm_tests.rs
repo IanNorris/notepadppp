@@ -622,3 +622,51 @@ fn test_branch_arrows_with_real_x86() {
     // Target should be the last nop (at 0x1004 = line index 3)
     assert_eq!(lines[arrows[0].to_line].address, 0x1004);
 }
+
+#[test]
+fn test_instruction_size_at() {
+    // nop = 1 byte, mov rbp,rsp = 3 bytes
+    let bytes = vec![0x90, 0x48, 0x89, 0xe5];
+    let disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    assert_eq!(disasm.instruction_size_at(0), Some(1)); // nop
+    assert_eq!(disasm.instruction_size_at(1), Some(3)); // mov rbp, rsp
+    assert_eq!(disasm.instruction_size_at(100), None);  // out of bounds
+}
+
+#[test]
+fn test_align_to_instruction() {
+    // push rbp (0x55) = 1 byte, mov rbp,rsp (0x48 0x89 0xe5) = 3 bytes, nop = 1 byte
+    let bytes = vec![0x55, 0x48, 0x89, 0xe5, 0x90];
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    disasm.add_symbol("test_func".to_string(), 0x1000, 5);
+
+    // Offset 0 is valid instruction boundary
+    assert_eq!(disasm.align_to_instruction(0), 0);
+    // Offset 1 is valid instruction boundary (mov rbp, rsp)
+    assert_eq!(disasm.align_to_instruction(1), 1);
+    // Offset 2 is mid-instruction — should align back to 1
+    assert_eq!(disasm.align_to_instruction(2), 1);
+    // Offset 3 is mid-instruction — should align back to 1
+    assert_eq!(disasm.align_to_instruction(3), 1);
+    // Offset 4 is valid (nop)
+    assert_eq!(disasm.align_to_instruction(4), 4);
+}
+
+#[test]
+fn test_rip_relative_branch_target() {
+    // call qword ptr [rip + 0x10] — RIP-relative indirect call
+    // This is encoded as FF 15 10 00 00 00
+    let bytes = vec![
+        0xFF, 0x15, 0x10, 0x00, 0x00, 0x00, // call [rip+0x10]
+        0x90, // nop
+    ];
+    let mut disasm = Disassembler::from_bytes(bytes, DisasmArch::X86_64, 0x1000);
+    // The RIP-relative target: insn_addr(0x1000) + insn_size(6) + 0x10 = 0x1016
+    disasm.add_symbol("target_func".to_string(), 0x1016, 0);
+
+    let lines = disasm.disassemble_range(0, 2);
+    assert_eq!(lines[0].mnemonic, "call");
+    // branch_target should be resolved via RIP-relative
+    assert!(lines[0].branch_target.is_some(), "RIP-relative call should have branch_target");
+    assert_eq!(lines[0].branch_target.unwrap(), 0x1016);
+}

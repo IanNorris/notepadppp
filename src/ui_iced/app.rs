@@ -1946,7 +1946,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::DisasmScroll(delta) => {
-            if !state.show_disasm {
+            if !state.show_disasm || state.disasm_sym_browser {
                 return Task::none();
             }
             if let Some(ref disasm) = state.disasm_state {
@@ -1954,12 +1954,37 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     state.disasm_offset = 0;
                 } else if delta == i32::MAX {
                     state.disasm_offset = disasm.bytes().len().saturating_sub(50);
+                } else if delta > 0 {
+                    // Scroll down: advance by instruction sizes
+                    let mut off = state.disasm_offset;
+                    for _ in 0..delta.unsigned_abs() {
+                        let step = disasm.instruction_size_at(off).unwrap_or(1);
+                        off = off.saturating_add(step);
+                    }
+                    state.disasm_offset = off.min(disasm.bytes().len().saturating_sub(1));
                 } else {
-                    let byte_delta = (delta as i64) * 3;
-                    let new_off = state.disasm_offset as i64 + byte_delta;
-                    state.disasm_offset = new_off.max(0) as usize;
-                    if state.disasm_offset >= disasm.bytes().len() {
-                        state.disasm_offset = disasm.bytes().len().saturating_sub(1);
+                    // Scroll up: step back and align to instruction boundary
+                    let abs_delta = delta.unsigned_abs() as usize;
+                    // Rough estimate: average x86 instruction is ~3-4 bytes
+                    let byte_back = abs_delta * 4;
+                    let raw_off = state.disasm_offset.saturating_sub(byte_back);
+                    // Align from a nearby anchor
+                    let aligned = disasm.align_to_instruction(raw_off);
+                    // Disassemble forward from aligned to find the right instruction
+                    let lines = disasm.disassemble_range(aligned, abs_delta + 20);
+                    // Find the instruction that's `abs_delta` before current offset
+                    let mut candidates: Vec<usize> = lines
+                        .iter()
+                        .filter_map(|l| disasm.address_to_offset(l.address))
+                        .filter(|&o| o < state.disasm_offset)
+                        .collect();
+                    candidates.sort();
+                    if candidates.len() >= abs_delta {
+                        state.disasm_offset = candidates[candidates.len() - abs_delta];
+                    } else if let Some(&first) = candidates.first() {
+                        state.disasm_offset = first;
+                    } else {
+                        state.disasm_offset = aligned;
                     }
                 }
             }
@@ -2055,7 +2080,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::DisasmCopySelection => {
             if let Some(ref disasm) = state.disasm_state {
-                let lines = disasm.disassemble_range(state.disasm_offset, 50);
+                let lines = disasm.disassemble_range(state.disasm_offset, 200);
                 let mut output = String::new();
                 for line in &lines {
                     if let Some(ref sym) = line.symbol {
