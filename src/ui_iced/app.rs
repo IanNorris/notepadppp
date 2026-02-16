@@ -76,6 +76,7 @@ pub enum Message {
     NewTab,
     OpenFile,
     FileOpened(Result<(String, std::path::PathBuf), String>),
+    FilesOpened(Vec<Result<(String, std::path::PathBuf), String>>),
     Save,
     SaveAs,
     FileSaved(Result<std::path::PathBuf, String>),
@@ -823,7 +824,7 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
     let should_close_menu = !matches!(
         message,
         Message::MenuToggle(_) | Message::MenuSwitch(_) | Message::MenuClose | Message::SubMenuToggle(_) | Message::EditorAction(_)
-            | Message::FileOpened(_) | Message::FileSaved(_)
+            | Message::FileOpened(_) | Message::FilesOpened(_) | Message::FileSaved(_)
             | Message::FindQueryChanged(_) | Message::ReplaceTextChanged(_)
             | Message::ToggleCaseSensitive | Message::ToggleWholeWord | Message::ToggleRegex
             | Message::FindNext | Message::FindPrev | Message::ReplaceNext | Message::ReplaceAll
@@ -911,71 +912,80 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         }
         Message::OpenFile => Task::perform(
             async {
-                let handle = rfd::AsyncFileDialog::new()
+                let handles = rfd::AsyncFileDialog::new()
                     .set_title("Open File")
-                    .pick_file()
+                    .pick_files()
                     .await;
-                match handle {
-                    Some(h) => {
-                        let path = h.path().to_path_buf();
-                        match std::fs::read(&path) {
-                            Ok(bytes) => {
-                                let content = String::from_utf8_lossy(&bytes).to_string();
-                                Ok((content, path))
+                match handles {
+                    Some(files) => {
+                        let mut results = Vec::new();
+                        for h in files {
+                            let path = h.path().to_path_buf();
+                            match std::fs::read(&path) {
+                                Ok(bytes) => {
+                                    let content = String::from_utf8_lossy(&bytes).to_string();
+                                    results.push(Ok((content, path)));
+                                }
+                                Err(e) => results.push(Err(e.to_string())),
                             }
-                            Err(e) => Err(e.to_string()),
                         }
+                        Ok(results)
                     }
                     None => Err("Cancelled".to_string()),
                 }
             },
-            Message::FileOpened,
+            |result| match result {
+                Ok(files) => Message::FilesOpened(files),
+                Err(_) => Message::FilesOpened(Vec::new()),
+            },
         ),
-        Message::FileOpened(result) => {
-            if let Ok((content, path)) = result {
-                // Extract file extension for syntax highlighting
-                let ext_lower = path.extension().and_then(|e| e.to_str())
-                    .map(|e| e.to_lowercase()).unwrap_or_default();
-                if !ext_lower.is_empty() {
-                    state.file_extension = ext_lower.clone();
-                }
-                match state.tab_manager.open_file(path) {
-                    Ok(idx) => {
-                        if !ext_lower.is_empty() {
-                            let lang = super::highlighter::language_for_extension(&ext_lower);
-                            state.tab_manager.get_document_mut(idx).unwrap().language = lang;
-                        }
-                        let doc = state.tab_manager.get_document(idx).unwrap();
-                        let is_binary = doc.is_binary;
-                        let buf_text = doc.buffer.text();
-                        state.fold_manager.detect_regions(&buf_text);
-                        if is_binary {
-                            state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
-                        } else {
-                            state.tab_contents.push(TabContent::with_text(&buf_text));
-                        }
-                        // Auto-activate disassembler for binary files
-                        if is_binary {
-                            if let Some(ref p) = state.tab_manager.active_document().path {
-                                if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
-                                    state.disasm_state = Some(disasm);
-                                    state.disasm_offset = 0;
-                                    state.show_disasm = true;
-                                    if let Some(tc) = state.tab_contents.get_mut(idx) {
-                                        tc.show_disasm = true;
+        Message::FilesOpened(results) => {
+            for result in results {
+                if let Ok((content, path)) = result {
+                    let ext_lower = path.extension().and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase()).unwrap_or_default();
+                    if !ext_lower.is_empty() {
+                        state.file_extension = ext_lower.clone();
+                    }
+                    match state.tab_manager.open_file(path) {
+                        Ok(idx) => {
+                            if !ext_lower.is_empty() {
+                                let lang = super::highlighter::language_for_extension(&ext_lower);
+                                state.tab_manager.get_document_mut(idx).unwrap().language = lang;
+                            }
+                            let doc = state.tab_manager.get_document(idx).unwrap();
+                            let is_binary = doc.is_binary;
+                            let buf_text = doc.buffer.text();
+                            state.fold_manager.detect_regions(&buf_text);
+                            if is_binary {
+                                state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                            } else {
+                                state.tab_contents.push(TabContent::with_text(&buf_text));
+                            }
+                            if is_binary {
+                                if let Some(ref p) = state.tab_manager.active_document().path {
+                                    if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
+                                        state.disasm_state = Some(disasm);
+                                        state.disasm_offset = 0;
+                                        state.show_disasm = true;
+                                        if let Some(tc) = state.tab_contents.get_mut(idx) {
+                                            tc.show_disasm = true;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    Err(_) => {
-                        state.tab_manager.new_tab();
-                        state.fold_manager.detect_regions(&content);
-                        state.tab_contents.push(TabContent::with_text(&content));
+                        Err(e) => {
+                            log::error!("Failed to open file: {}", e);
+                        }
                     }
                 }
             }
             Task::none()
+        }
+        Message::FileOpened(result) => {
+            // Delegate single file open to FilesOpened
+            update(state, Message::FilesOpened(vec![result]))
         }
         Message::Save => {
             let idx = state.tab_manager.active_index();
@@ -1578,8 +1588,15 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                         let line = m.line;
                         return update(state, Message::FifClickResult(path, line));
                     }
-                    state.tab_manager.active_document_mut().cursor.position.line = m.line;
-                    state.tab_manager.active_document_mut().cursor.position.col = 0;
+                    let target_line = m.line;
+                    let idx = state.tab_manager.active_index();
+                    if let Some(tc) = state.tab_contents.get_mut(idx) {
+                        tc.content.perform(text_editor::Action::Move(text_editor::Motion::DocumentStart));
+                        for _ in 0..target_line {
+                            tc.content.perform(text_editor::Action::Move(text_editor::Motion::Down));
+                        }
+                        tc.content.perform(text_editor::Action::Move(text_editor::Motion::Home));
+                    }
                 }
             }
             Task::none()
@@ -1704,48 +1721,23 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleFold => {
-            if let Some(tc) = state.tab_contents.get(state.tab_manager.active_index()) {
-                let line = tc.content.cursor_position().0;
-                if state.fold_manager.is_fold_point(line) {
-                    let was_folded = state.fold_manager.is_folded(line);
-                    state.fold_manager.toggle_fold(line);
-                    if !was_folded {
-                        let hidden = state.fold_manager.hidden_line_count(line);
-                        state.status_message = Some((format!("Folded {} lines (iced editor cannot hide lines — fold markers shown in gutter)", hidden), std::time::Instant::now()));
-                    } else {
-                        state.status_message = Some(("Region unfolded".to_string(), std::time::Instant::now()));
-                    }
-                } else {
-                    state.status_message = Some(("No foldable region at cursor".to_string(), std::time::Instant::now()));
-                }
-            }
+            state.status_message = Some(("Code folding is not yet supported with the current editor backend".to_string(), std::time::Instant::now()));
             Task::none()
         }
-        Message::ToggleFoldAt(line) => {
-            let was_folded = state.fold_manager.is_folded(line);
-            state.fold_manager.toggle_fold(line);
-            if !was_folded {
-                let hidden = state.fold_manager.hidden_line_count(line);
-                state.status_message = Some((format!("▶ Folded {} lines (lines {}-{})", hidden, line + 1, line + 1 + hidden), std::time::Instant::now()));
-            } else {
-                state.status_message = Some(("▼ Region unfolded".to_string(), std::time::Instant::now()));
-            }
+        Message::ToggleFoldAt(_line) => {
+            state.status_message = Some(("Code folding is not yet supported with the current editor backend".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::FoldAll => {
-            state.fold_manager.fold_all();
-            let count = state.fold_manager.regions().len();
-            state.status_message = Some((format!("Folded all {} regions", count), std::time::Instant::now()));
+            state.status_message = Some(("Code folding is not yet supported with the current editor backend".to_string(), std::time::Instant::now()));
             Task::none()
         }
         Message::UnfoldAll => {
-            state.fold_manager.unfold_all();
-            state.status_message = Some(("All regions unfolded".to_string(), std::time::Instant::now()));
+            state.status_message = Some(("Code folding is not yet supported with the current editor backend".to_string(), std::time::Instant::now()));
             Task::none()
         }
-        Message::FoldLevel(level) => {
-            state.fold_manager.fold_level(level);
-            state.status_message = Some((format!("Folded to level {}", level), std::time::Instant::now()));
+        Message::FoldLevel(_level) => {
+            state.status_message = Some(("Code folding is not yet supported with the current editor backend".to_string(), std::time::Instant::now()));
             Task::none()
         }
 
@@ -2185,11 +2177,12 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
         Message::GotoSymbol(line) => {
             // Navigate to the given line in the editor
             let idx = state.tab_manager.active_index();
-            if let Some(_tc) = state.tab_contents.get(idx) {
-                // Set document cursor position (visual cursor movement
-                // not possible with iced text_editor)
-                state.tab_manager.active_document_mut().cursor.position.line = line;
-                state.tab_manager.active_document_mut().cursor.position.col = 0;
+            if let Some(tc) = state.tab_contents.get_mut(idx) {
+                tc.content.perform(text_editor::Action::Move(text_editor::Motion::DocumentStart));
+                for _ in 0..line {
+                    tc.content.perform(text_editor::Action::Move(text_editor::Motion::Down));
+                }
+                tc.content.perform(text_editor::Action::Move(text_editor::Motion::Home));
             }
             Task::none()
         }
@@ -4755,127 +4748,7 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                 |highlight, _theme| highlight.to_format(),
             );
 
-        if state.show_line_numbers {
-            let content_text = tc.content.text();
-            let lines: Vec<&str> = content_text.lines().collect();
-            let line_count = lines.len().max(1);
-            let gutter_width = 55.0;
-            let tab_size = state.pref_tab_size.parse::<usize>().unwrap_or(4);
-
-            let mut gutter_col = column![];
-            for i in 1..=line_count {
-                let line_idx = i - 1; // 0-based
-                let fold_indicator = if state.fold_manager.is_folded(line_idx) {
-                    let hidden = state.fold_manager.hidden_line_count(line_idx);
-                    format!("▶ {}  +{}", i, hidden)
-                } else if state.fold_manager.is_fold_point(line_idx) {
-                    format!("▼ {}", i)
-                } else if state.fold_manager.is_hidden(line_idx) {
-                    // Dim hidden lines in gutter
-                    format!("│ {}", i)
-                } else {
-                    format!("  {}", i)
-                };
-
-                let line_color = if state.fold_manager.is_folded(line_idx) {
-                    state.theme.accent
-                } else if state.fold_manager.is_hidden(line_idx) {
-                    iced::Color { a: 0.3, ..t_text_dim }
-                } else {
-                    t_text_dim
-                };
-
-                let line_label = text(fold_indicator)
-                    .size(state.font_size)
-                    .color(line_color);
-
-                let line_widget: Element<'_, Message> = if state.fold_manager.is_fold_point(line_idx) {
-                    mouse_area(
-                        container(line_label)
-                            .width(Length::Fixed(gutter_width))
-                            .align_x(iced::alignment::Horizontal::Right)
-                            .padding([0, 4]),
-                    )
-                    .on_press(Message::ToggleFoldAt(line_idx))
-                    .into()
-                } else {
-                    container(line_label)
-                        .width(Length::Fixed(gutter_width))
-                        .align_x(iced::alignment::Horizontal::Right)
-                        .padding([0, 4])
-                        .into()
-                };
-
-                gutter_col = gutter_col.push(line_widget);
-            }
-
-            let gutter = container(gutter_col)
-                .height(Length::Fill)
-                .clip(true)
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(t_bg)),
-                    ..Default::default()
-                });
-
-            // Build editor row with optional indent guides and line endings
-            let mut editor_row = row![gutter].height(Length::Fill);
-
-            // Indent guides column
-            if state.show_indent_guides {
-                let t_guide_color = state.theme.border;
-                let mut guide_col = column![];
-                for i in 0..line_count {
-                    let line = if i < lines.len() { lines[i] } else { "" };
-                    let indent = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
-                    let guide_level = indent / tab_size.max(1);
-                    let guides: String = (0..guide_level).map(|_| "│").collect::<Vec<_>>().join(" ");
-                    let guide_text = if guides.is_empty() {
-                        text(" ").size(state.font_size).color(iced::Color::TRANSPARENT)
-                    } else {
-                        text(guides).size(state.font_size).color(t_guide_color)
-                    };
-                    guide_col = guide_col.push(guide_text);
-                }
-                editor_row = editor_row.push(
-                    container(guide_col)
-                        .height(Length::Fill)
-                        .clip(true)
-                        .style(move |_theme: &Theme| container::Style {
-                            background: Some(iced::Background::Color(t_bg)),
-                            ..Default::default()
-                        })
-                );
-            }
-
-            editor_row = editor_row.push(editor);
-
-            // Line endings column
-            if state.show_line_endings {
-                let t_eol_color = state.theme.text_dim;
-                let doc_le = state.tab_manager.active_document().line_ending;
-                let eol_marker = match doc_le {
-                    crate::editor::document::LineEnding::CRLF => "⏎",
-                    crate::editor::document::LineEnding::LF => "↵",
-                    crate::editor::document::LineEnding::CR => "←",
-                };
-                let mut eol_col = column![];
-                for _ in 0..line_count {
-                    eol_col = eol_col.push(
-                        text(eol_marker).size(state.font_size).color(t_eol_color)
-                    );
-                }
-                editor_row = editor_row.push(
-                    container(eol_col)
-                        .height(Length::Fill)
-                        .clip(true)
-                        .style(move |_theme: &Theme| container::Style {
-                            background: Some(iced::Background::Color(t_bg)),
-                            ..Default::default()
-                        })
-                );
-            }
-
-            container(editor_row)
+        container(editor)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(move |_theme: &Theme| container::Style {
@@ -4883,52 +4756,6 @@ fn view_editor<'a>(state: &'a NotepadIced) -> Element<'a, Message> {
                     ..Default::default()
                 })
                 .into()
-        } else if state.show_line_endings {
-            // Line endings without line numbers
-            let content_text = tc.content.text();
-            let line_count = content_text.lines().count().max(1);
-            let t_eol_color = state.theme.text_dim;
-            let doc_le = state.tab_manager.active_document().line_ending;
-            let eol_marker = match doc_le {
-                crate::editor::document::LineEnding::CRLF => "⏎",
-                crate::editor::document::LineEnding::LF => "↵",
-                crate::editor::document::LineEnding::CR => "←",
-            };
-            let mut eol_col = column![];
-            for _ in 0..line_count {
-                eol_col = eol_col.push(
-                    text(eol_marker).size(state.font_size).color(t_eol_color)
-                );
-            }
-            let editor_row = row![
-                editor,
-                container(eol_col)
-                    .height(Length::Fill)
-                    .clip(true)
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(t_bg)),
-                        ..Default::default()
-                    })
-            ].height(Length::Fill);
-
-            container(editor_row)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(t_bg)),
-                    ..Default::default()
-                })
-                .into()
-        } else {
-            container(editor)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(t_bg)),
-                    ..Default::default()
-                })
-                .into()
-        }
     } else {
         container(text("No document open"))
             .width(Length::Fill)

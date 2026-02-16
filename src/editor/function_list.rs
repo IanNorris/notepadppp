@@ -136,19 +136,24 @@ fn extract_c_family_symbol(line: &str) -> Option<String> {
         && !line.starts_with("if ") && !line.starts_with("for ") && !line.starts_with("while ")
         && !line.starts_with("switch ") && !line.starts_with("catch ")
         && !line.starts_with("return ") && !line.starts_with("throw ")
-        // Exclude C++ initializer list entries (lines starting with comma or colon)
         && !line.starts_with(',') && !line.starts_with(':')
-        // Exclude lines that are just member(value) calls with no return type
         && !line.starts_with('.')
-        // Exclude preprocessor and single-word function calls (e.g. "printf(...)")
+        // Exclude statements (ending with ;) — these are calls/declarations, not definitions
+        && !line.ends_with(';')
     {
         let before_paren = line.split('(').next()?;
+        // Exclude method calls (. or -> before paren)
+        if before_paren.contains('.') || before_paren.contains("->") {
+            return None;
+        }
+        // Exclude assignments
+        if before_paren.contains('=') {
+            return None;
+        }
         let words: Vec<&str> = before_paren.split_whitespace().collect();
         if words.len() >= 2 {
             let name = words.last()?;
-            // Exclude if the first word looks like a member init (starts with comma/colon after trim)
             if name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ':' || c == '~') {
-                // Skip names that are just scope resolution or destructors without a return type
                 let clean_name = name.trim_start_matches('~');
                 let clean_name = if let Some(pos) = clean_name.rfind("::") {
                     &clean_name[pos + 2..]
@@ -158,7 +163,6 @@ fn extract_c_family_symbol(line: &str) -> Option<String> {
                 if clean_name.is_empty() {
                     return None;
                 }
-                // Exclude if the "return type" (first word) is a control flow keyword
                 let first = words[0];
                 if first == "else" || first == "do" || first == "case"
                     || first == "delete" || first == "new" || first == "sizeof"

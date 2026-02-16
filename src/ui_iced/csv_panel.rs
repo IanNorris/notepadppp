@@ -38,8 +38,10 @@ pub fn view_csv_viewer<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Element<
     let looks_like_csv = csv_data.headers.len() >= 2
         || (csv_data.headers.len() == 1 && csv_data.rows.len() <= 1);
 
-    if csv_data.headers.is_empty() || !looks_like_csv {
-        let msg = if csv_data.headers.len() == 1 && csv_data.rows.len() > 1 {
+    if csv_data.headers.is_empty() || !looks_like_csv || csv_data.headers.len() > 50 {
+        let msg = if csv_data.headers.len() > 50 {
+            "This data doesn't appear to be CSV (too many columns detected). Try a different delimiter or check the file format."
+        } else if csv_data.headers.len() == 1 && csv_data.rows.len() > 1 {
             "This data doesn't appear to be CSV (only 1 column detected). Try a different delimiter or check the file format."
         } else {
             "No CSV data to display"
