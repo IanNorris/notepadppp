@@ -51,21 +51,44 @@ impl TabManager {
         let large_info = LargeFileInfo::from_path(&path)?;
 
         let mut doc = if large_info.is_large {
-            // Use streaming load via Rope::from_reader for large files
-            let file = std::fs::File::open(&path)?;
-            let buffer = TextBuffer::from_reader(file)?;
-            let text_sample = buffer.line(0).unwrap_or_default();
-            // Detect encoding from first bytes for metadata (approximate)
-            let sample_bytes = text_sample.as_bytes();
-            let encoding = file_io::detect_encoding(sample_bytes);
-            let line_ending = file_io::detect_line_ending(&text_sample);
-            let mut doc = Document::new();
-            doc.buffer = buffer;
-            doc.path = Some(path);
-            doc.encoding = encoding;
-            doc.line_ending = line_ending;
-            doc = doc.with_large_file_info(large_info);
-            doc
+            // Check for binary content before attempting Rope (which requires valid UTF-8)
+            let raw_header = {
+                let mut f = std::fs::File::open(&path)?;
+                let mut buf = vec![0u8; 8192];
+                let n = std::io::Read::read(&mut f, &mut buf)?;
+                buf.truncate(n);
+                buf
+            };
+            let is_binary = file_io::is_binary_content(&raw_header);
+
+            if is_binary {
+                // Binary large file: use lossy conversion
+                let raw_bytes = std::fs::read(&path)?;
+                let content = String::from_utf8_lossy(&raw_bytes).into_owned();
+                let encoding = file_io::detect_encoding(&raw_bytes);
+                let mut doc = Document::from_str(&content)
+                    .with_path(path)
+                    .with_encoding(encoding)
+                    .with_large_file_info(large_info);
+                doc.is_binary = true;
+                doc.read_only = true;
+                doc
+            } else {
+                // Text large file: use streaming load via Rope::from_reader
+                let file = std::fs::File::open(&path)?;
+                let buffer = TextBuffer::from_reader(file)?;
+                let text_sample = buffer.line(0).unwrap_or_default();
+                let sample_bytes = text_sample.as_bytes();
+                let encoding = file_io::detect_encoding(sample_bytes);
+                let line_ending = file_io::detect_line_ending(&text_sample);
+                let mut doc = Document::new();
+                doc.buffer = buffer;
+                doc.path = Some(path);
+                doc.encoding = encoding;
+                doc.line_ending = line_ending;
+                doc = doc.with_large_file_info(large_info);
+                doc
+            }
         } else {
             let raw_bytes = std::fs::read(&path)?;
             let is_binary = file_io::is_binary_content(&raw_bytes);

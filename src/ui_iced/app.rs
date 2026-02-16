@@ -2741,27 +2741,23 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 state.tab_manager.set_active(idx);
             } else {
                 // Open the file in a new tab
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            state.file_extension = ext.to_lowercase();
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    state.file_extension = ext.to_lowercase();
+                }
+                match state.tab_manager.open_file(path) {
+                    Ok(idx) => {
+                        if !state.file_extension.is_empty() {
+                            let lang = super::highlighter::language_for_extension(&state.file_extension);
+                            state.tab_manager.get_document_mut(idx).unwrap().language = lang;
                         }
-                        match state.tab_manager.open_file(path) {
-                            Ok(idx) => {
-                                if !state.file_extension.is_empty() {
-                                    let lang = super::highlighter::language_for_extension(&state.file_extension);
-                                    state.tab_manager.get_document_mut(idx).unwrap().language = lang;
-                                }
-                                let doc = state.tab_manager.get_document(idx).unwrap();
-                                let buf_text = doc.buffer.text();
-                                state.fold_manager.detect_regions(&buf_text);
-                                state.tab_contents.push(TabContent::with_text(&buf_text));
-                            }
-                            Err(_) => {
-                                state.tab_manager.new_tab();
-                                state.fold_manager.detect_regions(&content);
-                                state.tab_contents.push(TabContent::with_text(&content));
-                            }
+                        let doc = state.tab_manager.get_document(idx).unwrap();
+                        let is_binary = doc.is_binary;
+                        let buf_text = doc.buffer.text();
+                        state.fold_manager.detect_regions(&buf_text);
+                        if is_binary {
+                            state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                        } else {
+                            state.tab_contents.push(TabContent::with_text(&buf_text));
                         }
                     }
                     Err(e) => {
@@ -2949,38 +2945,43 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::FileDropped(path) => {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                let lang = if ext.is_empty() { "Plain Text".to_string() } else { super::highlighter::language_for_extension(&ext) };
-                if state.active_pane == 1 && state.split_mode != SplitMode::None {
-                    state.split_file_extension = ext;
-                    match state.split_tab_manager.open_file(path) {
-                        Ok(idx) => {
-                            state.split_tab_manager.get_document_mut(idx).unwrap().language = lang;
-                            let doc = state.split_tab_manager.get_document(idx).unwrap();
-                            let buf_text = doc.buffer.text();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let lang = if ext.is_empty() { "Plain Text".to_string() } else { super::highlighter::language_for_extension(&ext) };
+            if state.active_pane == 1 && state.split_mode != SplitMode::None {
+                state.split_file_extension = ext;
+                match state.split_tab_manager.open_file(path) {
+                    Ok(idx) => {
+                        state.split_tab_manager.get_document_mut(idx).unwrap().language = lang;
+                        let doc = state.split_tab_manager.get_document(idx).unwrap();
+                        let is_binary = doc.is_binary;
+                        let buf_text = doc.buffer.text();
+                        if is_binary {
+                            state.split_tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                        } else {
                             state.split_tab_contents.push(TabContent::with_text(&buf_text));
                         }
-                        Err(_) => {
-                            state.split_tab_manager.new_tab();
-                            state.split_tab_contents.push(TabContent::with_text(&content));
-                        }
                     }
-                } else {
-                    state.file_extension = ext;
-                    match state.tab_manager.open_file(path) {
-                        Ok(idx) => {
-                            state.tab_manager.get_document_mut(idx).unwrap().language = lang;
-                            let doc = state.tab_manager.get_document(idx).unwrap();
-                            let buf_text = doc.buffer.text();
-                            state.fold_manager.detect_regions(&buf_text);
+                    Err(e) => {
+                        log::error!("Failed to open dropped file: {}", e);
+                    }
+                }
+            } else {
+                state.file_extension = ext;
+                match state.tab_manager.open_file(path) {
+                    Ok(idx) => {
+                        state.tab_manager.get_document_mut(idx).unwrap().language = lang;
+                        let doc = state.tab_manager.get_document(idx).unwrap();
+                        let is_binary = doc.is_binary;
+                        let buf_text = doc.buffer.text();
+                        state.fold_manager.detect_regions(&buf_text);
+                        if is_binary {
+                            state.tab_contents.push(TabContent::with_text("[Binary file — use Disassembler or Hex viewer]"));
+                        } else {
                             state.tab_contents.push(TabContent::with_text(&buf_text));
                         }
-                        Err(_) => {
-                            state.tab_manager.new_tab();
-                            state.fold_manager.detect_regions(&content);
-                            state.tab_contents.push(TabContent::with_text(&content));
-                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to open dropped file: {}", e);
                     }
                 }
             }
