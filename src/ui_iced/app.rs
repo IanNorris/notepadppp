@@ -45,18 +45,27 @@ pub struct TabDragState {
 /// Per-tab state that pairs an iced text_editor::Content with our Document index.
 pub struct TabContent {
     pub content: text_editor::Content,
+    pub disasm_state: Option<crate::tools::disasm::Disassembler>,
+    pub disasm_offset: usize,
+    pub show_disasm: bool,
 }
 
 impl TabContent {
     fn new() -> Self {
         Self {
             content: text_editor::Content::new(),
+            disasm_state: None,
+            disasm_offset: 0,
+            show_disasm: false,
         }
     }
 
     fn with_text(s: &str) -> Self {
         Self {
             content: text_editor::Content::with_text(s),
+            disasm_state: None,
+            disasm_offset: 0,
+            show_disasm: false,
         }
     }
 }
@@ -205,6 +214,7 @@ pub enum Message {
     DisasmEditHexInput(String),
     DisasmEditHexCommit(usize),
     DisasmCopySelection,
+    DisasmCopyText(String),
     HashSha256,
     HashSha1,
     HashMd5,
@@ -700,7 +710,13 @@ fn open_cli_files(state: &mut NotepadIced, cli: &CliArgs) {
                     if let Some(ref p) = state.tab_manager.active_document().path {
                         if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
                             state.disasm_state = Some(disasm);
+                            state.disasm_offset = 0;
                             state.show_disasm = true;
+                            // Also save to tab content
+                            let idx = state.tab_manager.active_index();
+                            if let Some(tc) = state.tab_contents.get_mut(idx) {
+                                tc.show_disasm = true;
+                            }
                         }
                     }
                 }
@@ -761,7 +777,12 @@ fn open_instance_files(state: &mut NotepadIced, msg: &crate::platform::single_in
                     if let Some(ref p) = state.tab_manager.active_document().path {
                         if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
                             state.disasm_state = Some(disasm);
+                            state.disasm_offset = 0;
                             state.show_disasm = true;
+                            let idx = state.tab_manager.active_index();
+                            if let Some(tc) = state.tab_contents.get_mut(idx) {
+                                tc.show_disasm = true;
+                            }
                         }
                     }
                 }
@@ -924,7 +945,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                             if let Some(ref p) = state.tab_manager.active_document().path {
                                 if let Ok(disasm) = crate::tools::disasm::Disassembler::from_file(p) {
                                     state.disasm_state = Some(disasm);
+                                    state.disasm_offset = 0;
                                     state.show_disasm = true;
+                                    if let Some(tc) = state.tab_contents.get_mut(idx) {
+                                        tc.show_disasm = true;
+                                    }
                                 }
                             }
                         }
@@ -977,6 +1002,17 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 while state.tab_contents.len() < state.tab_manager.tab_count() {
                     state.tab_contents.push(TabContent::new());
                 }
+                // Load disasm state from new active tab
+                let new_idx = state.tab_manager.active_index();
+                if let Some(tc) = state.tab_contents.get_mut(new_idx) {
+                    state.show_disasm = tc.show_disasm;
+                    state.disasm_state = tc.disasm_state.take();
+                    state.disasm_offset = tc.disasm_offset;
+                } else {
+                    state.show_disasm = false;
+                    state.disasm_state = None;
+                    state.disasm_offset = 0;
+                }
             }
             Task::none()
         }
@@ -1000,7 +1036,26 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             });
 
             if idx < state.tab_manager.tab_count() {
+                // Save disasm state to the old tab before switching
+                let old_idx = state.tab_manager.active_index();
+                if let Some(old_tc) = state.tab_contents.get_mut(old_idx) {
+                    old_tc.show_disasm = state.show_disasm;
+                    old_tc.disasm_state = state.disasm_state.take();
+                    old_tc.disasm_offset = state.disasm_offset;
+                }
+
                 state.tab_manager.set_active(idx);
+
+                // Load disasm state from the new tab
+                if let Some(new_tc) = state.tab_contents.get_mut(idx) {
+                    state.show_disasm = new_tc.show_disasm;
+                    state.disasm_state = new_tc.disasm_state.take();
+                    state.disasm_offset = new_tc.disasm_offset;
+                } else {
+                    state.show_disasm = false;
+                    state.disasm_state = None;
+                    state.disasm_offset = 0;
+                }
                 // Update file extension from the newly active tab's path
                 if let Some(path) = &state.tab_manager.active_document().path {
                     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -1024,7 +1079,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             doc.buffer.undo();
             let buf_text = doc.buffer.text();
             let idx = state.tab_manager.active_index();
-            state.tab_contents[idx] = TabContent::with_text(&buf_text);
+            let mut new_tc = TabContent::with_text(&buf_text);
+            if let Some(old_tc) = state.tab_contents.get_mut(idx) {
+                new_tc.disasm_state = old_tc.disasm_state.take();
+                new_tc.disasm_offset = old_tc.disasm_offset;
+                new_tc.show_disasm = old_tc.show_disasm;
+            }
+            state.tab_contents[idx] = new_tc;
             Task::none()
         }
         Message::Redo => {
@@ -1032,7 +1093,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
             doc.buffer.redo();
             let buf_text = doc.buffer.text();
             let idx = state.tab_manager.active_index();
-            state.tab_contents[idx] = TabContent::with_text(&buf_text);
+            let mut new_tc = TabContent::with_text(&buf_text);
+            if let Some(old_tc) = state.tab_contents.get_mut(idx) {
+                new_tc.disasm_state = old_tc.disasm_state.take();
+                new_tc.disasm_offset = old_tc.disasm_offset;
+                new_tc.show_disasm = old_tc.show_disasm;
+            }
+            state.tab_contents[idx] = new_tc;
             Task::none()
         }
 
@@ -1821,6 +1888,11 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                     state.disasm_state = Some(disasm);
                 }
             }
+            // Sync to tab
+            let idx = state.tab_manager.active_index();
+            if let Some(tc) = state.tab_contents.get_mut(idx) {
+                tc.show_disasm = state.show_disasm;
+            }
             Task::none()
         }
         Message::DisasmGotoAddressInput(s) => {
@@ -2009,6 +2081,13 @@ pub fn update(state: &mut NotepadIced, message: Message) -> Task<Message> {
                 }
             }
             state.disasm_context_menu = false;
+            Task::none()
+        }
+
+        Message::DisasmCopyText(s) => {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                let _ = clip.set_text(s);
+            }
             Task::none()
         }
 
@@ -4174,6 +4253,18 @@ pub fn subscription(_state: &NotepadIced) -> Subscription<Message> {
             // Mouse button release completes tab drag
             iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 Some(Message::TabDragEnd)
+            }
+            // Mouse wheel scrolls the disassembler
+            iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let lines = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => -y as i32 * 3,
+                    mouse::ScrollDelta::Pixels { y, .. } => -(y / 20.0) as i32,
+                };
+                if lines != 0 {
+                    Some(Message::DisasmScroll(lines))
+                } else {
+                    None
+                }
             }
             _ => None,
         }

@@ -177,29 +177,68 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
             };
 
             for (line_idx, line) in lines.iter().enumerate() {
-                // Symbol label
+                // Symbol label — render as a row with same column structure
                 if let Some(ref sym) = line.symbol {
-                    rows = rows.push(
-                        container(
-                            text(format!("<{}>:", sym))
-                                .size(12)
-                                .color(accent)
-                                .font(Font::MONOSPACE),
-                        )
-                        .padding([4, 10]),
+                    let mut sym_row = row![].align_y(iced::Alignment::Center);
+                    if state.disasm_show_address {
+                        sym_row = sym_row.push(container(Space::with_width(0)).width(160));
+                    }
+                    if state.disasm_show_bytes {
+                        sym_row = sym_row.push(container(Space::with_width(0)).width(180));
+                    }
+                    // Arrow column continuation for symbol rows
+                    if state.disasm_show_arrows && num_lanes > 0 {
+                        let arrow_str = render_arrow_column(line_idx, &arrows, num_lanes);
+                        let arrow_color = if arrow_str.trim().is_empty() {
+                            text_dim
+                        } else {
+                            accent
+                        };
+                        sym_row = sym_row.push(
+                            container(
+                                text(arrow_str)
+                                    .size(12)
+                                    .color(arrow_color)
+                                    .font(Font::MONOSPACE),
+                            )
+                            .width(arrow_col_width as u16),
+                        );
+                    }
+                    // Truncate long symbol names to avoid wrapping
+                    let sym_display = if sym.len() > 80 {
+                        format!("<{}...>:", &sym[..77])
+                    } else {
+                        format!("<{}>:", sym)
+                    };
+                    sym_row = sym_row.push(
+                        text(sym_display)
+                            .size(12)
+                            .color(accent)
+                            .font(Font::MONOSPACE),
                     );
+                    rows = rows.push(container(sym_row).padding([2, 10]));
                 }
 
                 let mut insn_row = row![].align_y(iced::Alignment::Center);
 
                 if state.disasm_show_address {
                     let addr_str = format!("0x{:016X}", line.address);
+                    let addr_copy = addr_str.clone();
                     insn_row = insn_row.push(
                         container(
-                            text(addr_str)
-                                .size(12)
-                                .color(text_dim)
-                                .font(Font::MONOSPACE),
+                            button(
+                                text(addr_str)
+                                    .size(12)
+                                    .color(text_dim)
+                                    .font(Font::MONOSPACE),
+                            )
+                            .on_press(Message::DisasmCopyText(addr_copy))
+                            .padding(0)
+                            .style(move |_theme: &Theme, _status| button::Style {
+                                background: None,
+                                text_color: text_dim,
+                                ..Default::default()
+                            }),
                         )
                         .width(160),
                     );
@@ -244,12 +283,31 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
                 }
 
                 let mnemonic_padded = format!("{:<10}", line.mnemonic);
+                // Build full line text for copy
+                let full_line = {
+                    let mut s = String::new();
+                    s.push_str(&format!("{:016X}  ", line.address));
+                    s.push_str(&format!("{:<10} {}", line.mnemonic, line.operands));
+                    if let Some(ref c) = line.comment {
+                        s.push_str(&format!("  ; {}", c));
+                    }
+                    s
+                };
                 insn_row = insn_row.push(
                     container(
-                        text(mnemonic_padded)
-                            .size(12)
-                            .color(text_color)
-                            .font(Font::MONOSPACE),
+                        button(
+                            text(mnemonic_padded)
+                                .size(12)
+                                .color(text_color)
+                                .font(Font::MONOSPACE),
+                        )
+                        .on_press(Message::DisasmCopyText(full_line))
+                        .padding(0)
+                        .style(move |_theme: &Theme, _status| button::Style {
+                            background: None,
+                            text_color: text_color,
+                            ..Default::default()
+                        }),
                     )
                     .width(80),
                 );
@@ -365,18 +423,14 @@ pub fn view_disasm_panel<'a>(state: &'a NotepadIced, theme: &AppTheme) -> Elemen
         ..Default::default()
     });
 
-    // Use mouse_area to capture right-click and scroll
+    // Use mouse_area to capture right-click
     let body_content = mouse_area(rows)
         .on_right_press(Message::DisasmContextMenu);
 
-    let body = scrollable(body_content)
+    let body = container(body_content)
         .height(Length::Fill)
         .width(Length::Fill)
-        .direction(iced::widget::scrollable::Direction::Vertical(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(10)
-                .scroller_width(8),
-        ));
+        .clip(true);
 
     let panel = column![toolbar, col_header, body, status_bar];
 
